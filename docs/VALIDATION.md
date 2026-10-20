@@ -130,3 +130,21 @@
 - 恢复独立服务器 PID 29316，客户端 PID 8648 未改变。host_workshop_map 3758986810 后确认 map=de_dust2 / addon=3758986810 / UDP27016；plain status 确认 prophunt_dust2 场景加载，game_type=3/game_mode=0。
 - 服务器加载日志仍有自定义 cfg invalid commands 和可见性/光照资源警告；本轮确认服务器加载与房间身份，没有强制客户端加入，未验收实际玩家游戏流程。
 - 证据 artifacts/relay-trial/20261013-190304-2122.log、20261013-190328-2122.log；新版真实房间界面检查 artifacts/v0522-addon-entry/room-smoke.txt。
+
+---
+
+# 2026-10-21 v0.5.23 终端传输迁移（-netconport → -concommandpipe）
+
+CS2 1.41.7.8 移除了 `-netconport`，原有的终端、换图、人数与人机管理全部失效。本节记录重建后的验收。
+
+- 传输层：命令走命名管道，回显读子进程 stdout。**协议原语零改动**——`status_json` 解析、echo 标记配对、`ActiveHumans`、`BotIds`、`TeamBots.Joined` 均沿用。
+- 两条硬约束已实测并写进代码注释：两个管道必须在 cs2 启动前存在（否则引擎在 `inputservice.cpp (408) CConsoleCommandPipes::Create` 断言并写 minidump）；路径必须是 `\\.\pipe\NAME` 全形（两条反斜杠），`.\pipe\NAME` 与裸名同样断言。
+- out 管道实测恒 0 字节（v2–v12），引擎只往 stdout 写，因此 `ConsolePipe` 不以 out 管道连上作为就绪条件。
+- 121 项单元测试通过，其中两条加人场景已从旧的 TCP 模拟改为**真实命名管道 + 假引擎喂 stdout**，覆盖管道读写与 stdout 泵两条真实路径。
+- 真实 CS2 1.41.9.1 端到端：管道被接受、`status_json` 解析出 `map=de_dust2`、echo 标记回到 stdout、`quit` 退出码 0。
+- 加人协议真实复验：发 `log on` 后收到 2 个 CT 入队事件（`Slingshot<2><BOT>`、`Arno<3><BOT>`），`clients_bot` 到 4。
+- 终端各面板发出的每一条命令都发给了真实独立服务器：**没有一条是引擎不认识的**。唯二两条 `Unknown command` 来自引擎自带的 `gamemode_competitive.cfg`（`mp_weapons_glow_on_ground`、`sv_gameinstructor_enable`），与本启动器无关。
+- 启动器自检：`--smoke --restart-smoke --terminal-smoke` 全部通过。独立服务器 PID 57828 → 55760，工坊图 `ttt_cgmentos_minecraft` 换图并核验实际地图与身份 `[A:1:3674538005:51999]`；客户端 PID 保持。
+- 本机边玩边开（Listen）模式**不再提供终端**：Steam `-applaunch` 起的客户端不提供 stdout，管道能连但读不到回显，任何"执行并核验"都会假成功。该模式的相关入口改为明确说明；换图与人数管理请用独立服务器。
+- 关闭启动器现在会先正常停服（发 `quit`，超时才只结束该进程），并新增托盘图标与「最小化到托盘 / 直接退出」可选。此前关窗会退到后台却无托盘图标。
+- 未验收：好友端跨网络实际可达性与对局内实际体验；本次只验证传输层与管理命令。
