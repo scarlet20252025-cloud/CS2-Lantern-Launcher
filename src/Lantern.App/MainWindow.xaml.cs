@@ -15,6 +15,8 @@ public sealed class Preferences
 {
     public bool AutoRefresh { get; set; } = true;
     public bool GridView { get; set; } = true;
+    // Closing the window may hide to the tray instead of quitting.
+    public bool CloseToTray { get; set; } = true;
     public string SelectedIdentity { get; set; } = "";
     public string Root { get; set; } = "";
     public string Extra { get; set; } = "";
@@ -39,6 +41,9 @@ public partial class MainWindow : Window
     bool ready, busy;
     string? lastRules;
     TerminalWindow? terminal;
+    // The dedicated server this launcher started, if any. Closing the launcher
+    // stops it: a server we cannot administer is worse than no server.
+    LocalServer? localServer;
     readonly bool smoke;
     readonly Stopwatch startup = Stopwatch.StartNew();
     readonly System.Windows.Threading.DispatcherTimer mapTimer = new() { Interval = TimeSpan.FromSeconds(4) };
@@ -51,8 +56,9 @@ public partial class MainWindow : Window
         smoke = Environment.GetCommandLineArgs().Contains("--smoke");
         dataDir = Environment.GetEnvironmentVariable("LANTERN_DATA_DIR") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CS2Lantern");
         InitializeComponent();
+        BuildTray();
         Loaded += async (_, _) => await Init();
-        Closing += (_, _) => { roomTimer.Stop(); mapTimer.Stop(); lifetime.Cancel(); terminal?.Close(); if (ready) { try { Save(); } catch { } } };
+        Closing += OnClosing;
         mapTimer.Tick += async (_, _) => await CheckMapChanges();
         roomTimer.Tick += async (_, _) => await MonitorRoom();
     }
@@ -70,7 +76,7 @@ public partial class MainWindow : Window
             install = Discovery.Detect(steamRoot, string.IsNullOrWhiteSpace(prefs.Root) ? null : prefs.Root);
             RootBox.Text = install.Root; ExtraBox.Text = prefs.Extra;
             ModeBox.ItemsSource = GameMode.All; ModeBox.SelectedIndex = Math.Clamp(prefs.Settings.ModeIndex, 0, GameMode.All.Length - 1);
-            LoadSettings(prefs.Settings); ready = true; HostChanged(null, null!);
+            LoadSettings(prefs.Settings); TrayCheck.IsChecked = prefs.CloseToTray; ready = true; HostChanged(null, null!);
             SetView(prefs.GridView);
             // Restore a deliberate official-map selection (including crash recovery).
             // New users still default to local workshop maps.
@@ -174,7 +180,7 @@ public partial class MainWindow : Window
                 }
                 if (Environment.GetCommandLineArgs().Contains("--terminal-layout"))
                 {
-                    var window = new TerminalWindow("", "", Settings().Kind != HostKind.Listen) { Owner = this };
+                    var window = new TerminalWindow("", Settings().Kind != HostKind.Listen) { Owner = this };
                     window.Show(); window.UpdateLayout(); await window.CaptureCategories(dataDir);
                     var image = new RenderTargetBitmap((int)window.ActualWidth, (int)window.ActualHeight, 96, 96, PixelFormats.Pbgra32);
                     image.Render(window); var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(image));
@@ -286,7 +292,7 @@ public partial class MainWindow : Window
             RoundMinutes = Number(TimeBox, "回合时间"), FreezeSeconds = Number(FreezeBox, "冻结时间"), StartMoney = Number(MoneyBox, "初始金钱"),
             AutoBalance = BalanceCheck.IsChecked == true, FriendlyFire = FriendlyCheck.IsChecked == true, Cheats = CheatsCheck.IsChecked == true, ApplyRules = RulesCheck.IsChecked == true,
             Name = NameBox.Text, Port = Number(PortBox, "端口"), Password = PasswordBox.Password, Token = TokenBox.Password,
-            EnableConsole = ConsoleCheck.IsChecked == true, ConsolePassword = ConsoleKey() };
+            EnableConsole = ConsoleCheck.IsChecked == true };
     }
     void Save()
     {
@@ -511,7 +517,6 @@ public partial class MainWindow : Window
         {
             var selected = Selected(); var plan = Plan(); var args = plan.Arguments.ToArray();
             var tokenIndex = Array.IndexOf(args, "+sv_setsteamaccount"); if (tokenIndex >= 0) args[tokenIndex + 1] = "<hidden>";
-            var consoleKeyIndex = Array.IndexOf(args, "-netconpassword"); if (consoleKeyIndex >= 0) args[consoleKeyIndex + 1] = "<hidden>";
             var rules = plan.Rules; if (PasswordBox.Password.Length > 0) rules = rules.Replace("sv_password \"" + PasswordBox.Password + "\"", "sv_password \"<hidden>\"");
             ShowText("启动配置预览 · " + selected.Title, $"地图：{selected.Title}\n内部名称：{selected.MapName}\n工坊 ID：{selected.Id}\n\n" + string.Join(" ", args) + "\n\n// " + plan.BootName + "\n" + plan.Boot + "\n// " + plan.RulesName + "\n" + rules);
         }
@@ -546,14 +551,9 @@ public partial class MainWindow : Window
                 if (hasGame)
                 {
                     var console = Terminal();
-                    if (existing!.Port == null)
-                    {
-                        console.Show(); console.Activate();
-                        console.ReportRepair("当前 CS2 未启用终端，地图尚未切换。打完后点击“启用终端并重新启动 CS2”，确认后将加载：" + expected.Title);
-                        Status("需要先启用终端；当前游戏保持运行，未执行换图。"); return;
-                    }
-                    await SwitchExistingRoom(expected, s, root);
-                    return;
+                    console.Show(); console.Activate();
+                    console.ReportRepair("本机边玩边开模式不再支持换图与终端管理。CS2 已移除终端端口，而新通道要求启动器自己拉起进程才能读到回显；Steam 启动的客户端做不到。请改用独立服务器模式，当前游戏未受影响。");
+                    Status("本机模式无终端；换图与人数管理请改用独立服务器。"); return;
                 }
                 var steam = Path.Combine(steamRoot, "steam.exe"); if (!File.Exists(steam)) throw new FileNotFoundException("没有找到 Steam 客户端，请先安装或登录 Steam。");
                 var start = new ProcessStartInfo(steam) { UseShellExecute = false, WorkingDirectory = steamRoot };
@@ -572,10 +572,13 @@ public partial class MainWindow : Window
                     throw new InvalidOperationException($"游戏 UDP 端口 {s.Port} 已被占用，未启动第二个服务器。请在高级设置中选择空闲游戏端口，或结束旧房间后再开服；这不是终端端口。");
                 if (!s.EnableConsole) throw new InvalidOperationException("独立服务器需要启用私服终端模式，以使用隔离运行目录。");
                 var serverExe = await Task.Run(() => DedicatedRuntime.Prepare(root));
-                var start = new ProcessStartInfo(serverExe) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(serverExe)!, WindowStyle = ProcessWindowStyle.Hidden };
-                foreach (var a in plan.Arguments) start.ArgumentList.Add(a);
-                using var launchedServer = Process.Start(start) ?? throw new InvalidOperationException("服务器进程未能启动。");
-                RunText.Text = "独立服务器已请求启动。请等待控制台加载完成；用 status 核实状态，输入 quit 停服。关闭启动器不会停服。";
+                // The launcher must own the process: commands go out on a named
+                // pipe, but the engine writes its output to stdout, which is only
+                // redirectable for a process we start ourselves.
+                localServer?.Dispose();
+                localServer = LocalServer.Start(serverExe, plan, Path.GetDirectoryName(serverExe)!);
+                var launchedServer = localServer.Process;
+                RunText.Text = "独立服务器已启动。关闭启动器会同时停服，不会留在后台。";
                 {
                     RunText.Text = expected.Official ? "正在启动并核验服务器：" + expected.Title
                         : "正在初始化独立服务器（临时加载 Dust II），等待 Steam 登录后切换到：" + expected.Title;
@@ -741,77 +744,23 @@ public partial class MainWindow : Window
         bool dedicated = HostBox.SelectedIndex != 0;
         if (terminal != null && terminal.Dedicated != dedicated) terminal.Close();
         if (terminal != null) return terminal;
-        terminal = new TerminalWindow(ConsoleKey(), RootBox.Text.Trim(), dedicated) { Owner = this };
+        terminal = new TerminalWindow(RootBox.Text.Trim(), dedicated) { Owner = this };
         terminal.EnableTerminalRequested = EnableClientTerminal;
         terminal.Closed += (_, _) => terminal = null;
         return terminal;
     }
     void TerminalClick(object sender, RoutedEventArgs e) { var window = Terminal(); window.Show(); window.Activate(); }
-    async Task EnableClientTerminal()
+    // The old repair path restarted the Steam-launched client with -netconport so
+    // a terminal could attach. Both halves are gone: the port switch no longer
+    // exists, and the replacement (pipe + stdout) needs the launcher to own the
+    // process. Reimplementing this for Listen mode is not possible; the honest
+    // answer is to send the user to the dedicated-server mode.
+    Task EnableClientTerminal()
     {
-        if (launching) throw new InvalidOperationException("正在处理启动请求，请等待完成。");
-        if (HostBox.SelectedIndex != 0) throw new InvalidOperationException("请先选择本机边玩边开模式。");
-        launching = true; HostBox.IsEnabled = false; LaunchButton.IsEnabled = false;
-        var target = Terminal();
-        try
-        {
-            // Snapshot and validate everything before asking the running client to exit.
-            var root = RootBox.Text.Trim(); var expected = Selected();
-            var settings = Settings(); settings.EnableConsole = true;
-            var plan = Hosting.Build(expected, settings, "repair_" + DateTime.Now.ToString("yyyyMMddHHmmss"));
-            var arguments = Hosting.DeferredClientArguments(plan);
-            var steam = Path.Combine(steamRoot, "steam.exe");
-            if (!File.Exists(steam)) throw new FileNotFoundException("未找到 Steam，请先修正路径。");
-            var endpoint = await Task.Run(() => GameProcesses.Find(root, false));
-            using var process = endpoint == null ? null : Process.GetProcessById(endpoint.ProcessId);
-            var started = process?.StartTime;
-            if (MessageBox.Show(target, "将正常关闭当前 CS2，退出当前大厅或对局，再通过 Steam 启用外部终端并加载：\n\n" + expected.Title + "\n\n以 -insecure 私服模式启动，不能进行官方安全匹配。不会强制结束进程。现在继续？", "启用终端并重新启动", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel) != MessageBoxResult.OK)
-            { target.ReportRepair("已取消；当前游戏未受影响。"); return; }
-            if (process != null && !process.HasExited)
-            {
-                var current = await Task.Run(() => GameProcesses.Find(root, false));
-                if (current?.ProcessId != endpoint!.ProcessId || process.StartTime != started)
-                    throw new InvalidOperationException("游戏进程已变化，请重新点击修复入口。");
-                target.ReportRepair("正在请求正常退出 CS2，最多等待 30 秒…");
-                if (!process.CloseMainWindow()) throw new InvalidOperationException("无法请求正常退出，请手动退出 CS2 后再点击此入口。");
-                try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30)); }
-                catch (TimeoutException) { throw new InvalidOperationException("游戏尚未退出，已停止本次启动。请手动退出后重试；不会强制结束游戏。"); }
-            }
-            target.ResetConnection();
-            if (await Task.Run(() => GameProcesses.Find(root, false)) != null)
-                throw new InvalidOperationException("仍有游戏客户端运行，未重复启动，请退出后重试。");
-            if (System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpListeners().Any(p => p.Port == 2121))
-                throw new InvalidOperationException("终端 TCP 2121 被其他程序占用，未启动游戏。请释放该端口后重试。");
-            var exec = Hosting.WriteConfigs(root, plan); lastRules = RoomTransitions.ConsoleCommands(plan.Rules);
-            ConsoleCheck.IsChecked = true; Save();
-            var launch = new ProcessStartInfo(steam) { UseShellExecute = false, WorkingDirectory = steamRoot };
-            launch.ArgumentList.Add("-applaunch"); launch.ArgumentList.Add("730");
-            // Defer the map command until an authenticated console has answered.
-            foreach (var arg in arguments) launch.ArgumentList.Add(arg);
-            Process.Start(launch)?.Dispose();
-            target.ReportRepair("已请求 Steam 启动，正在等待终端验证；尚未发送地图命令…");
-            var deadline = DateTime.UtcNow.AddSeconds(90); var sent = false; var last = "等待游戏进程";
-            while (DateTime.UtcNow < deadline)
-            {
-                await Task.Delay(500);
-                if (target.IsClosed || lifetime.IsCancellationRequested) return;
-                try
-                {
-                    await target.ConnectGame();
-                    if (!sent) { sent = true; await target.SendCommand(RoomTransitions.ConsoleCommands(plan.Boot)); }
-                    var room = await target.GetRoomStatus();
-                    if (room.Map == expected.MapName && (expected.Official || room.Addon == expected.Id))
-                    {
-                        target.ReportRepair("终端已验证，实际地图已核实：" + expected.Title);
-                        RunText.Text = "已加载并核实：" + expected.Title; Status("终端与所选地图已就绪。"); return;
-                    }
-                    last = "当前地图：" + room.Map;
-                }
-                catch (Exception ex) { last = ex.Message; }
-            }
-            throw new InvalidOperationException("等待超时，未确认所选地图就绪。" + last + "。请查看终端日志；不会自动重复重启或换图。");
-        }
-        finally { launching = false; HostBox.IsEnabled = true; LaunchButton.IsEnabled = true; }
+        var message = "本机边玩边开模式已无法启用终端。\n\nCS2 在 1.41.7.8 移除了终端端口；现在的控制通道是命名管道，而命令回显只能从启动器自己拉起的进程 stdout 读到。通过 Steam 启动的客户端两项都不满足。\n\n请改用“独立服务器”模式：启动器会自己拉起服务器进程，换图、人数与人机管理都可用。当前游戏未受影响。";
+        terminal?.ReportRepair(message.Replace("\n\n", " "));
+        MessageBox.Show(this, message, "此模式不支持终端", MessageBoxButton.OK, MessageBoxImage.Information);
+        return Task.CompletedTask;
     }
     void SetView(bool grid)
     {
@@ -823,10 +772,5 @@ public partial class MainWindow : Window
     }
     void GridViewClick(object sender, RoutedEventArgs e) { SetView(true); Save(); }
     void ListViewClick(object sender, RoutedEventArgs e) { SetView(false); Save(); }
-    string ConsoleKey()
-    {
-        var file = Path.Combine(dataDir, "console-key.txt");
-        if (!File.Exists(file)) File.WriteAllText(file, Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24)));
-        return File.ReadAllText(file).Trim();
-    }
+    void TrayCheckClick(object sender, RoutedEventArgs e) { prefs.CloseToTray = TrayCheck.IsChecked == true; Save(); }
 }

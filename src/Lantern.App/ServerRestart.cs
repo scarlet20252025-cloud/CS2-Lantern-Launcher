@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Windows;
 using Lantern.Core;
 
@@ -36,10 +37,9 @@ public partial class MainWindow
             throw new InvalidOperationException("恢复端口仍被占用；未启动第二个服务器。");
         RunText.Text = failedTitle + " 导致服务器退出；正在用 Dust II 恢复（仅尝试一次）…";
         var serverExe = await Task.Run(() => DedicatedRuntime.Prepare(root));
-        var start = new ProcessStartInfo(serverExe)
-        { UseShellExecute = true, WorkingDirectory = System.IO.Path.GetDirectoryName(serverExe)!, WindowStyle = ProcessWindowStyle.Hidden };
-        foreach (var arg in plan.Arguments) start.ArgumentList.Add(arg);
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("安全服务器未启动。");
+        localServer?.Dispose();
+        localServer = LocalServer.Start(serverExe, plan, Path.GetDirectoryName(serverExe)!);
+        var process = localServer.Process;
         var deadline = DateTime.UtcNow.AddSeconds(45);
         while (DateTime.UtcNow < deadline)
         {
@@ -90,7 +90,7 @@ public partial class MainWindow
                 using var control = new GameConsole();
                 try
                 {
-                    if (endpoint.Port is int port) { await control.Connect(port, endpoint.Password); await control.Send("quit"); }
+                    if (endpoint.CommandPipe != null) { await control.Connect(endpoint.CommandPipe); await control.Send("quit"); }
                     else process.CloseMainWindow();
                 }
                 catch (Exception ex) { Status("正常停服请求未完成：" + ex.Message); }
@@ -108,6 +108,8 @@ public partial class MainWindow
             }
             terminal?.ResetConnection();
             if (await Task.Run(() => GameProcesses.Find(root, true)) != null) throw new InvalidOperationException("服务器尚未退出，未重复启动。");
+            // The process is gone; drop its pipes so the replacement gets fresh ones.
+            localServer?.Dispose(); localServer = null;
             stopped = true;
         }
         catch (Exception ex) { RunText.Text = "重启未完成：" + ex.Message; Error(ex); }

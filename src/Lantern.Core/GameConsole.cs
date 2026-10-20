@@ -1,5 +1,3 @@
-using System.Net;
-using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 
@@ -19,13 +17,13 @@ public static class RoomStatusParser
     }
     public static RoomStatus Parse(string text)
     {
-        // NetCon can append asynchronous networking output between the closing
-        // JSON brace and our echo marker. Consume one complete JSON value only.
+        // The engine can append asynchronous output between the closing JSON
+        // brace and our echo marker. Consume one complete JSON value only.
         var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(text));
         using var json = JsonDocument.ParseValue(ref reader);
         if (!json.RootElement.TryGetProperty("server", out var server) || server.ValueKind != JsonValueKind.Object
             || !server.TryGetProperty("map", out var map) || map.ValueKind != JsonValueKind.String || (string.IsNullOrWhiteSpace(map.GetString()) || map.GetString() == "<empty>"))
-            throw new InvalidOperationException("终端已连接，但这个服务器尚未加载地图（Inactive）。独立服务器与游戏客户端是两个进程；客户端有画面不代表独立服务器已开图。");
+            throw new InvalidOperationException("控制台已连接，但这个服务器尚未加载地图（Inactive）。独立服务器与游戏客户端是两个进程；客户端有画面不代表独立服务器已开图。");
         int Number(string name, int fallback) => server.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number) ? number : fallback;
         string Text(string name) => server.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
         int humans = Number("clients_human", -1), bots = Number("clients_bot", -1);
@@ -45,73 +43,74 @@ public static class ConsoleProtocol
     }
 }
 
-// Authenticated Source NetCon on loopback. Never replay commands after disconnect.
+/// <summary>
+/// A console session on a launcher-owned command pipe. Commands are written to
+/// the pipe; output arrives on the engine's redirected stdout and is matched
+/// here by echo markers. Never replay a mutation after a failure.
+/// </summary>
 public sealed class GameConsole : IDisposable
 {
-    readonly TcpClient client = new();
     readonly CancellationTokenSource lifetime = new();
-    readonly SemaphoreSlim writer = new(1, 1);
     readonly SemaphoreSlim queries = new(1, 1);
     readonly TaskCompletionSource verified = new(TaskCreationOptions.RunContinuationsAsynchronously);
     readonly string probe = "LANTERN_LINK_" + Guid.NewGuid().ToString("N");
-    string secret = "";
+    ConsolePipe? pipe;
+    // Connect() disposes itself on failure and callers also wrap it in using,
+    // so Dispose must be idempotent or teardown throws over the real error.
+    int disposed;
     public event Action<string>? Output;
     public event Action<string>? Disconnected;
     public bool IsReady { get; private set; }
-    public async Task Connect(int port = 2121, string password = "")
+    public string? CommandPipe => pipe?.CommandPath;
+
+    /// <summary>
+    /// Binds to the channel a running server was launched with. There is no
+    /// password: pipe access is governed by the OS, not a shared secret.
+    /// </summary>
+    public async Task Connect(string commandPipe, CancellationToken token = default)
     {
-        if (port is < 1024 or > 65535) throw new ArgumentException("终端端口应为 1024–65535。");
-        if (password.Any(c => !char.IsAsciiLetterOrDigit(c))) throw new ArgumentException("终端密码必须为字母或数字。");
-        secret = password;
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token); timeout.CancelAfter(TimeSpan.FromSeconds(5));
+        if (string.IsNullOrWhiteSpace(commandPipe)) throw new ArgumentException("缺少控制台管道名称。");
+        var target = ConsolePipe.Find(commandPipe)
+            ?? throw new InvalidOperationException("控制台管道已不存在。启动器退出后无法接管已运行的服务器；请用“重启独立服务器”重新开服。");
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token, token);
+        timeout.CancelAfter(TimeSpan.FromSeconds(5));
         try
         {
-            await client.ConnectAsync(IPAddress.Loopback, port, timeout.Token);
-            _ = Task.Run(Receive);
-            if (password.Length > 0) await Write("PASS " + password);
+            await target.WaitUntilConnected(TimeSpan.FromSeconds(5), timeout.Token);
+            pipe = target;
+            pipe.Line += OnLine;
             await Write("echo " + probe);
             await verified.Task.WaitAsync(timeout.Token);
             IsReady = true;
         }
         catch { Dispose(); throw; }
     }
-    async Task Receive()
+
+    void OnLine(string text)
     {
-        string reason = "游戏连接已关闭";
-        try
-        {
-            using var reader = new StreamReader(client.GetStream(), Encoding.UTF8, false, 4096, true);
-            var buffer = new char[4096]; var line = new StringBuilder();
-            while (!lifetime.IsCancellationRequested)
-            {
-                int count = await reader.ReadAsync(buffer, lifetime.Token).ConfigureAwait(false);
-                if (count == 0) break;
-                for (int i = 0; i < count; i++)
-                {
-                    char c = buffer[i]; if (c == '\r') continue;
-                    if (c != '\n') { line.Append(c); if (line.Length < 65536) continue; }
-                    var text = line.ToString(); line.Clear();
-                    if (text.Trim() == probe) { verified.TrySetResult(); continue; }
-                    if (text.Length > 0) Output?.Invoke((secret.Length > 0 ? text.Replace(secret, "<hidden>") : text) + "\n");
-                }
-            }
-        }
-        catch (Exception e) when (e is IOException or SocketException or OperationCanceledException or ObjectDisposedException) { reason = e.Message; }
-        finally { IsReady = false; verified.TrySetException(new IOException(reason)); Disconnected?.Invoke(reason); }
+        if (text.Trim() == probe) { verified.TrySetResult(); return; }
+        if (text.Length > 0) Output?.Invoke(text);
     }
+
     async Task Write(string command)
     {
-        var packet = ConsoleProtocol.Command(command);
-        await writer.WaitAsync(lifetime.Token);
-        try { await client.GetStream().WriteAsync(packet, lifetime.Token); }
-        finally { writer.Release(); }
+        var target = pipe ?? throw new InvalidOperationException("控制台未连接，请先启动独立服务器。");
+        await target.Send(command, lifetime.Token);
     }
+
     public async Task Send(string command)
     {
-        if (!IsReady) throw new InvalidOperationException("终端未连接，请先连接本机游戏。");
+        if (!IsReady) throw new InvalidOperationException("控制台未连接，请先启动独立服务器。");
         try { await Write(command); }
-        catch { Dispose(); throw; }
+        catch { Fail("写入失败"); throw; }
     }
+
+    void Fail(string reason)
+    {
+        IsReady = false;
+        Disconnected?.Invoke(reason);
+    }
+
     public async Task<RoomStatus> ReadStatus()
     {
         await queries.WaitAsync(lifetime.Token);
@@ -176,7 +175,14 @@ public sealed class GameConsole : IDisposable
         }
         finally { Output -= Collect; queries.Release(); }
     }
-    public void Dispose() { IsReady = false; lifetime.Cancel(); client.Dispose(); }
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref disposed, 1) != 0) return;
+        IsReady = false;
+        if (pipe != null) { pipe.Line -= OnLine; pipe = null; }
+        lifetime.Cancel();
+        lifetime.Dispose();
+    }
 }
 
 public static class QuickCommands

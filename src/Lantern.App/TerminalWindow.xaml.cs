@@ -25,7 +25,6 @@ public partial class TerminalWindow : Window
     readonly SemaphoreSlim mapActivity = new(0, 1);
     public Task<bool> WaitForMapActivity(int milliseconds, CancellationToken token) => mapActivity.WaitAsync(milliseconds, token);
     public long MapActivation => Interlocked.Read(ref mapActivation);
-    readonly string password;
     readonly string gameRoot;
     readonly bool dedicated;
     public bool Dedicated => dedicated;
@@ -45,10 +44,8 @@ public partial class TerminalWindow : Window
     public async Task<RoomStatus> GetRoomStatus() { await ConnectGame(); return await connection!.ReadStatus(); }
     public async Task<int> GetActiveHumans() { await ConnectGame(); return await connection!.ReadActiveHumans(); }
     public async Task<int?> GetSpawnCount() { await ConnectGame(); return await connection!.ReadSpawnCount(); }
-    public int TargetPort => int.TryParse(PortInput.Text, out var port) ? port : 0;
-    public TerminalWindow(string password, string gameRoot, bool dedicated)
+    public TerminalWindow(string gameRoot, bool dedicated)
     {
-        this.password = password;
         this.gameRoot = gameRoot;
         this.dedicated = dedicated;
         InitializeComponent();
@@ -95,8 +92,8 @@ public partial class TerminalWindow : Window
             endpoint = await Task.Run(() => GameProcesses.Find(gameRoot, dedicated))
                 ?? throw new InvalidOperationException("没有找到" + (dedicated ? "独立服务器。请确认开服方式；正在玩的客户端不是独立服务器。" : "游戏客户端，请先通过启动器启动游戏。"));
             if (closed) throw new ObjectDisposedException(nameof(TerminalWindow));
-            if (endpoint.Port == null) throw new InvalidOperationException("当前" + (dedicated ? "独立服务器" : "游戏客户端") + "未启用外部终端，并非端口改变。" + (dedicated ? "请正常关闭独立服务器后重新开服。" : "打完后点击上方“启用终端并重新启动 CS2”，确认后生效。现在可在游戏控制台手动执行命令。"));
-            PortInput.Text = endpoint.Port.Value.ToString();
+            if (endpoint.CommandPipe == null) throw new InvalidOperationException("当前" + (dedicated ? "独立服务器" : "游戏客户端") + "未启用游戏终端。" + (dedicated ? "请正常关闭独立服务器后重新开服。" : "本机边玩边开模式无法启用终端：命令通过命名管道下发，回显只能从启动器自己拉起的进程读出，而 Steam 启动的客户端不给启动器 stdout。"));
+            PortInput.Text = endpoint.CommandPipe;
         }
         catch (Exception ex)
         {
@@ -104,7 +101,7 @@ public partial class TerminalWindow : Window
             ActionState.Text = ex.Message;
             connecting = false; ConnectButton.IsEnabled = true; throw;
         }
-        int port = endpoint.Port.Value;
+        var commandPipe = endpoint.CommandPipe!;
         connection?.Dispose(); var current = new GameConsole(); connection = current;
         current.Output += Log;
         current.Disconnected += message =>
@@ -113,14 +110,14 @@ public partial class TerminalWindow : Window
         };
         try
         {
-            await current.Connect(port, endpoint.Password);
+            await current.Connect(commandPipe);
             if (closed) return;
-            ConnectionText.Text = $"已验证 · {(dedicated ? "独立服务器" : "游戏客户端")} · PID {endpoint.ProcessId} · 127.0.0.1:{port}";
+            ConnectionText.Text = $"已验证 · {(dedicated ? "独立服务器" : "游戏客户端")} · PID {endpoint.ProcessId} · {commandPipe}";
             PortInput.IsEnabled = false;
             RepairPanel.Visibility = Visibility.Collapsed;
             Log("[连接] 游戏已返回验证回显。下方将显示游戏控制台输出。");
         }
-        catch { ConnectionText.Text = $"未连接 · PID {endpoint.ProcessId} 的终端 {port} 尚未就绪或验证失败，请稍后重试"; throw; }
+        catch { ConnectionText.Text = $"未连接 · PID {endpoint.ProcessId} 的终端 {commandPipe} 尚未就绪或验证失败，请稍后重试"; throw; }
         finally { connecting = false; ConnectButton.IsEnabled = true; }
     }
     public async Task SendCommand(string command)

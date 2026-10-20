@@ -3,12 +3,14 @@ using System.Text;
 using System.Text.Json;
 using Lantern.Core;
 
+// The console transport is now a named pipe plus stdout, so every simulated
+// engine below is a real pipe client. Nothing here touches an installed game.
 if (args.Contains("--population-live"))
 {
     var log = new System.Collections.Concurrent.ConcurrentQueue<string>();
     using var console = new GameConsole();
     console.Output += line => log.Enqueue(line);
-    await console.Connect(2121, File.ReadAllText(args[Array.IndexOf(args, "--key") + 1]).Trim());
+    await console.Connect(args[Array.IndexOf(args, "--pipe") + 1]);
     async Task<RoomStatus> Snapshot(string label) { var r = await console.ReadStatus(); Console.WriteLine(label + " " + JsonSerializer.Serialize(r)); return r; }
     await console.Send("jointeam 3"); await Task.Delay(2000);
     await console.Send(QuickCommands.RemoveBots); await QuickCommands.WaitBots(console, 0);
@@ -32,7 +34,7 @@ if (args.Contains("--population-live"))
 if (args.Contains("--room-live"))
 {
     using var client = new GameConsole();
-    await client.Connect(port: args.Contains("--port") ? int.Parse(args[Array.IndexOf(args, "--port") + 1]) : 2121, password: File.ReadAllText(args[Array.IndexOf(args, "--key") + 1]).Trim());
+    await client.Connect(args[Array.IndexOf(args, "--pipe") + 1]);
     var status = await client.ReadStatus();
     Console.WriteLine(JsonSerializer.Serialize(status));
     return;
@@ -43,8 +45,8 @@ if (args.Contains("--console-live"))
     var output = new System.Collections.Concurrent.ConcurrentQueue<string>();
     using var console = new GameConsole();
     console.Output += line => output.Enqueue(line);
-    await console.Connect(password: args.Contains("--key") ? File.ReadAllText(args[Array.IndexOf(args, "--key") + 1]).Trim() : "");
-    Console.WriteLine("PASS real CS2 NetCon echo handshake");
+    await console.Connect(args[Array.IndexOf(args, "--pipe") + 1]);
+    Console.WriteLine("PASS real CS2 pipe + stdout echo handshake");
     foreach (var command in new[] { "echo LANTERN_TEST_REMOVE", QuickCommands.RemoveBots, "bot_quota", "status", "echo LANTERN_TEST_BALANCE", QuickCommands.Balance(6), "bot_quota_mode", "bot_quota", "mp_autoteambalance", "mp_limitteams", "echo LANTERN_TEST_RESTART", QuickCommands.Restart })
     { await console.Send(command); await Task.Delay(400); }
     await Task.Delay(2500); await console.Send("status"); await Task.Delay(600);
@@ -70,92 +72,86 @@ try
     Check(MapCatalog.Cards(variants, "123:de_example_test")[0].MapName == "de_example_test", "remember explicit package variant across refresh");
     Check(MapCatalog.Cards(variants.Where(m => m.MapName.EndsWith("_test")))[0].MapName == "de_example_test", "search can discover hidden package variants");
     var plainClient = GameEndpointParser.Parse(10, "\"C:\\Games\\CS2\\cs2.exe\" -steam -perfectworld");
-    Check(!plainClient.Dedicated && plainClient.Port == null, "ordinary Steam launch is not assumed to expose 2121");
-    var customClient = GameEndpointParser.Parse(11, "\"C:\\Games With Spaces\\cs2.exe\" -steam -netconport 22123 -netconpassword abc123");
-    Check(customClient.Port == 22123 && customClient.Password == "abc123" && !customClient.Dedicated, "custom client port and auth read from actual launch arguments");
-    Check(!customClient.ToString().Contains("abc123"), "endpoint diagnostic never prints password");
-    var dedicatedEndpoint = GameEndpointParser.Parse(12, "cs2.exe -dedicated -netconport=2122 -netconpassword=xyz123");
-    Check(dedicatedEndpoint.Dedicated && dedicatedEndpoint.Port == 2122, "dedicated process is classified independently of window title");
-    Check(GameEndpointParser.Parse(13, "cs2.exe -netconport 99999").Port == null, "invalid terminal port is not guessed");
-    Check(GameEndpointParser.Parse(14, "\"C:\\-dedicated\\cs2.exe\" -steam").Dedicated == false, "path text cannot turn client into dedicated process");
-    // Isolated fake NetCon: random loopback port, never contacts an installed game.
-    var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
-    listener.Start();
-    var fakePort = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
-    var simulator = Task.Run(async () =>
+    Check(!plainClient.Dedicated && plainClient.CommandPipe == null, "ordinary Steam launch exposes no console channel");
+    var customClient = GameEndpointParser.Parse(11, "\"C:\\Games With Spaces\\cs2.exe\" -steam -concommandpipe \"\\\\.\\pipe\\Lantern-abc123-cmd,\\\\.\\pipe\\Lantern-abc123-out\"");
+    Check(customClient.CommandPipe == @"\\.\pipe\Lantern-abc123-cmd" && !customClient.Dedicated, "console command pipe is read from the first half of the launch argument");
+    Check(!customClient.ToString().Contains("-out"), "endpoint diagnostic never advertises the output pipe");
+    var dedicatedEndpoint = GameEndpointParser.Parse(12, "cs2.exe -dedicated -concommandpipe=\\\\.\\pipe\\Lantern-d1-cmd,\\\\.\\pipe\\Lantern-d1-out");
+    Check(dedicatedEndpoint.Dedicated && dedicatedEndpoint.CommandPipe == @"\\.\pipe\Lantern-d1-cmd", "dedicated process is classified independently of window title");
+    // The engine asserts unless the path is full Win32 form, so relative forms must not be trusted.
+    Check(GameEndpointParser.Parse(13, "cs2.exe -concommandpipe .\\pipe\\Lantern-x-cmd,.\\pipe\\Lantern-x-out").CommandPipe == null, "relative pipe path is not accepted");
+    Check(GameEndpointParser.Parse(14, "cs2.exe -concommandpipe Lantern-x-cmd").CommandPipe == null, "bare pipe name is not accepted");
+    Check(GameEndpointParser.Parse(15, "\"C:\\-dedicated\\cs2.exe\" -steam").Dedicated == false, "path text cannot turn client into dedicated process");
+    // Isolated fake engine: a real named pipe for commands plus a private stream
+    // for stdout. Never contacts an installed game.
+    int queries = 0;
+    await using (var engine = new FakeEngine(Write =>
     {
-        using var peer = await listener.AcceptTcpClientAsync();
-        using var reader = new StreamReader(peer.GetStream());
-        using var writer = new StreamWriter(peer.GetStream()) { AutoFlush = true };
-        int queries = 0;
-        while (await reader.ReadLineAsync() is string line)
+        if (Write == "status_json")
         {
-            if (line.StartsWith("echo ")) await writer.WriteLineAsync(line[5..]);
-            if (line.StartsWith("status_json; echo "))
+            return new[]
             {
-                await writer.WriteLineAsync("unrelated log before status");
-                await writer.WriteLineAsync("{");
-                await writer.WriteLineAsync(++queries == 1 ? "\"server\":{\"startup_ServerModuleInit\":1325}" : "\"server\":{\"map\":\"test_map\",\"clients_human\":2,\"clients_bot\":1,\"udp_port\":27016}");
-                await writer.WriteLineAsync("}" + line[18..]);
-            }
+                "unrelated log before status",
+                "{",
+                ++queries == 1 ? "\"server\":{\"startup_ServerModuleInit\":1325}" : "\"server\":{\"map\":\"test_map\",\"clients_human\":2,\"clients_bot\":1,\"udp_port\":27016}",
+                "}",
+            };
         }
-    });
+        return Array.Empty<string>();
+    }))
     using (var fakeClient = new GameConsole())
     {
-        await fakeClient.Connect(fakePort);
+        _ = engine.Pipe.ReadOutput(engine.Output, CancellationToken.None);
+        await fakeClient.Connect(engine.CommandPath);
         bool inactive = false;
         try { await fakeClient.ReadStatus(); } catch (InvalidOperationException e) { inactive = e.Message.Contains("尚未加载地图"); }
-        Check(inactive, "fake NetCon inactive state returns useful diagnosis without disconnecting");
+        Check(inactive, "fake engine inactive state returns useful diagnosis without disconnecting");
         var activeRoom = await fakeClient.ReadStatus();
-        Check(activeRoom.Map == "test_map" && activeRoom.Humans == 2 && activeRoom.Bots == 1, "fake NetCon recovers from inactive to active with combined closing brace and marker");
+        Check(activeRoom.Map == "test_map" && activeRoom.Humans == 2 && activeRoom.Bots == 1, "fake engine recovers from inactive to active with combined closing brace and marker");
     }
-    await simulator.WaitAsync(TimeSpan.FromSeconds(5)); listener.Stop();
-    var teamListener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
-    teamListener.Start();
     var teamCommands = new List<string>();
-    var teamLines = new List<string>();
-    var teamSimulator = Task.Run(async () =>
+    int bots = 0;
+    await using (var teamEngine = new FakeEngine(Write =>
     {
-        using var peer = await teamListener.AcceptTcpClientAsync();
-        using var reader = new StreamReader(peer.GetStream());
-        using var writer = new StreamWriter(peer.GetStream()) { AutoFlush = true };
-        int bots = 0;
-        while (await reader.ReadLineAsync() is string line)
-        {
-        teamLines.Add(line);
-        foreach (var part in line.Split(';').Select(p => p.Trim()))
+        foreach (var part in Write.Split(';').Select(p => p.Trim()))
         {
             teamCommands.Add(part);
-            if (part.StartsWith("echo ")) await writer.WriteLineAsync(part[5..]);
-            else if (part == "status_json")
-                await writer.WriteLineAsync("{\n\"server\":{\"map\":\"test_map\",\"clients_human\":1,\"clients_bot\":" + bots + ",\"udp_port\":27016}\n}");
-            else if (part == "status")
+            if (part == "status_json")
             {
-                await writer.WriteLineAsync("---------players--------");
-                for (int id = 1; id <= bots; id++) await writer.WriteLineAsync($" {id} BOT 0 0 active 0 'Bot{id}'");
-                await writer.WriteLineAsync("#end");
+                return new[] { "{\n\"server\":{\"map\":\"test_map\",\"clients_human\":1,\"clients_bot\":" + bots + ",\"udp_port\":27016}\n}" };
             }
-            else if (part == "log") await writer.WriteLineAsync("not currently logging");
-            else if (part == "bot_add_ct")
+            if (part == "status")
             {
-                if (bots == 10) await writer.WriteLineAsync("Could not add bot to the game: Team is full");
-                else { bots++; await writer.WriteLineAsync($"\"Bot{bots}<{bots}><BOT>\" switched from team <Unassigned> to <CT>"); }
+                var lines = new List<string> { "---------players--------" };
+                for (int id = 1; id <= bots; id++) lines.Add($" {id} BOT 0 0 active 0 'Bot{id}'");
+                lines.Add("#end");
+                return lines.ToArray();
+            }
+            if (part == "log") return new[] { "not currently logging" };
+            if (part == "bot_add_ct")
+            {
+                if (bots == 10) return new[] { "Could not add bot to the game: Team is full" };
+                bots++;
+                return new[] { $"\"Bot{bots}<{bots}><BOT>\" switched from team <Unassigned> to <CT>" };
             }
         }
-        }
-    });
-    using (var client = new GameConsole())
+        return Array.Empty<string>();
+    }))
     {
-        await client.Connect(((System.Net.IPEndPoint)teamListener.LocalEndpoint).Port);
-        var result = await TeamBots.Add(client, "ct", 10, 32);
-        Check(result.Added == 10 && result.Requested == 10, "all ten requested bots are verified instead of stopping after one");
-        result = await TeamBots.Add(client, "ct", 3, 32);
-        Check(result.Added == 0 && result.Detail.Contains("已满"), "batch stops at full CT team");
+        var rawCommands = teamEngine.RawCommands;
+        using (var client = new GameConsole())
+        {
+            _ = teamEngine.Pipe.ReadOutput(teamEngine.Output, CancellationToken.None);
+            await client.Connect(teamEngine.CommandPath);
+            var result = await TeamBots.Add(client, "ct", 10, 32);
+            Check(result.Added == 10 && result.Requested == 10, "all ten requested bots are verified instead of stopping after one");
+            result = await TeamBots.Add(client, "ct", 3, 32);
+            Check(result.Added == 0 && result.Detail.Contains("已满"), "batch stops at full CT team");
+        }
+        Check(rawCommands.Where(c => c.StartsWith("bot_add_ct")).All(c => c.Contains("; bot_quota ")), "quota correction shares the addition command buffer before engine simulation");
     }
-    await teamSimulator.WaitAsync(TimeSpan.FromSeconds(5)); teamListener.Stop();
     Check(teamCommands.Count(c => c == "bot_add_ct") == 11 && !teamCommands.Contains("bot_add_t")
         && teamCommands.Last(c => c.StartsWith("bot_quota ")) == "bot_quota 10" && teamCommands.Contains("log off"), "full team is not retried and quota is restored");
-    Check(teamLines.Where(c => c.StartsWith("bot_add_ct")).All(c => c.Contains("; bot_quota ")), "quota correction shares the addition command buffer before engine simulation");
     Check(TeamBots.ConfirmSurvivor(new() {4}, new() {4, 6}, new Dictionary<int,string>{{5,"t"},{6,"t"}}, "t"), "verify surviving bot when first engine addition was removed");
     Check(!TeamBots.ConfirmSurvivor(new() {4}, new() {4, 6}, new Dictionary<int,string>{{6,"ct"}}, "t"), "wrong team survivor is rejected");
     Check(TeamBots.IsExactAddition(new() { 18, 19 }, new() { 18, 19, 272 }, 16), "reused bot slots match generation-bearing status userid");
@@ -270,10 +266,21 @@ try
     Check(selectionSet.Contains(map), "selected item hash remains stable after mutable metadata updates");
     var plan = Hosting.Build(map, settings, "test");
     Check(Hosting.Build(map, settings with { QuotaMode = "fill", Bots = 10, MaxPlayers = 10 }, "test").Rules.Contains("bot_auto_vacate 0"), "fill total can equal capacity and disables reserved slot");
-    var deferred = Hosting.DeferredClientArguments(plan);
-    Check(!deferred.Contains("+exec") && deferred.Contains("-netconport") && deferred.Contains("-netconpassword"), "repair defers map until authenticated console while preserving terminal arguments");
-    Reject(() => Hosting.DeferredClientArguments(Hosting.Build(map, settings with { EnableConsole = false }, "test")), "repair cannot launch client without console");
-    Reject(() => Hosting.DeferredClientArguments(Hosting.Build(map, settings with { Kind = HostKind.DedicatedIp }, "test")), "repair cannot restart a dedicated server");
+    // Listen mode is launched by Steam, which gives us no stdout, so it must not
+    // pretend to have a console it could never read.
+    Check(!plan.Arguments.Contains("-concommandpipe") && !plan.Arguments.Contains("-netconport"), "Steam-launched client gets no console channel it cannot read");
+    var dedicatedConsole = Hosting.Build(map, settings with { Kind = HostKind.DedicatedIp }, "pipe_test");
+    Check(dedicatedConsole.Arguments.Contains("-concommandpipe"), "dedicated server requests a console pipe");
+    var pipeArg = dedicatedConsole.Arguments[dedicatedConsole.Arguments.IndexOf("-concommandpipe") + 1];
+    Check(pipeArg == @"\\.\pipe\Lantern-pipe_test-cmd,\\.\pipe\Lantern-pipe_test-out", "pipe argument is full Win32 form for both halves");
+    Check(LocalServer.SessionFrom(dedicatedConsole.Arguments) == "pipe_test", "session name is recoverable from the pipe argument");
+    Check(LocalServer.SessionFrom(plan.Arguments) == null, "client launch has no session to recover");
+    // A console-less dedicated server is only coherent for an official map: a
+    // workshop map needs the console to wait for Steam login before boot.
+    var officialNoConsole = Hosting.Build(new MapEntry { Official = true, MapName = "de_dust2", FilePath = "fixture.vpk" },
+        settings with { Kind = HostKind.DedicatedIp, EnableConsole = false }, "no_console");
+    Check(!officialNoConsole.Arguments.Contains("-concommandpipe"), "console can be turned off explicitly");
+    Reject(() => Hosting.Build(map, settings with { Kind = HostKind.DedicatedIp, EnableConsole = false }, "no_console"), "workshop dedicated server cannot start without a console");
     Check(plan.Boot.Contains("map_workshop 3070293560 de_fixture") && !plan.Arguments.Contains("-dedicated"), "listen launch uses actual workshop map name");
     Check(plan.Boot.IndexOf("lservercfgfile") < plan.Boot.IndexOf("map_workshop"), "post-load rule hook set before map load");
     Check(plan.Rules.Contains("bot_quota 3") && plan.Rules.Contains("bot_difficulty 2"), "bot rules present");

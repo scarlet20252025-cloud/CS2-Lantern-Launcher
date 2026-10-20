@@ -1,4 +1,4 @@
-﻿using System.Windows;
+using System.Windows;
 using Lantern.Core;
 
 namespace Lantern.App;
@@ -100,16 +100,15 @@ public partial class MainWindow
                 DisplayRoom(room);
                 throw new InvalidOperationException($"服务器实际仍是 {room.Map}，不是所选的 {selected.Title}。未让客户端加入旧地图。请先点“启动 / 切换服务器地图”，等核实完成再加入。");
             }
-            var root = RootBox.Text.Trim();
-            var endpoint = await Task.Run(() => GameProcesses.Find(root, false));
-            if (endpoint?.Port == null) throw new InvalidOperationException("请先启动启用了外部终端的 CS2 客户端；也可以复制加入命令到游戏控制台执行。");
-            using var client = new GameConsole();
-            await client.Connect(endpoint.Port.Value, endpoint.Password);
+            // The client has no console any more (-netconport is gone and a
+            // Steam-launched process gives us no stdout), so we cannot push a
+            // connect command into it. Hand the user the command instead.
             if (generation != roomGeneration || launching) throw new InvalidOperationException("房间已变化，请稍后重试。");
-            var address = HostBox.SelectedIndex == 2 ? room.Identity : "127.0.0.1";
-            await client.Send(Hosting.JoinCommand(address, room.Port, PasswordBox.Password));
             DisplayRoom(room);
-            Status("已向本机客户端发送加入请求；服务器保持运行。是否成功请查看游戏画面。");
+            var address = HostBox.SelectedIndex == 2 ? room.Identity : "127.0.0.1";
+            var command = Hosting.JoinCommand(address, room.Port, PasswordBox.Password);
+            Clipboard.SetText(command);
+            Status("已复制加入命令：" + command + "。请在游戏控制台粘贴执行；服务器保持运行。");
         }
         catch (Exception ex) { Error(ex); }
     }

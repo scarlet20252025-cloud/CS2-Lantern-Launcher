@@ -31,19 +31,13 @@ public sealed record HostSettings
     public string Password { get; set; } = "";
     public string Token { get; set; } = "";
     public bool EnableConsole { get; set; } = true;
+    // Retained so old preferences files still deserialize; pipes need no secret.
     public string ConsolePassword { get; set; } = "";
 }
 public sealed record LaunchPlan(string Rules, string Boot, string RulesName, string BootName, List<string> Arguments);
 
 public static class Hosting
 {
-    public static IReadOnlyList<string> DeferredClientArguments(LaunchPlan plan)
-    {
-        if (plan.Arguments.Contains("-dedicated") || !plan.Arguments.Contains("-netconport") ||
-            plan.Arguments.Count < 2 || plan.Arguments[^2] != "+exec" || plan.Arguments[^1] != plan.BootName)
-            throw new ArgumentException("只有启用终端的客户端才能延后加载地图。");
-        return plan.Arguments.Take(plan.Arguments.Count - 2).ToArray();
-    }
     public static string SafeText(string value)
     {
         if (value.Length > 128 || value.Any(c => char.IsControl(c) || c is '"' or ';' or '\\')) throw new ArgumentException("名称／密码不能含换行、引号、分号、反斜杠，长度最多 128。");
@@ -89,10 +83,15 @@ public static class Hosting
         var args = new List<string>();
         if (s.Kind != HostKind.Listen) args.Add("-dedicated");
         args.AddRange(new[] { "-console", "-port", s.Port.ToString(), "-maxplayers", s.MaxPlayers.ToString() });
-        if (s.EnableConsole)
+        // A console channel needs the launcher to own the process: commands go
+        // through the pipe, but output only arrives on the process stdout, which
+        // is unavailable when Steam launches the client. Listen mode therefore
+        // gets no console; runtime management requires a dedicated server.
+        if (s.EnableConsole && s.Kind != HostKind.Listen)
         {
-            if (!Regex.IsMatch(s.ConsolePassword, @"^[a-zA-Z0-9]{16,64}$")) throw new ArgumentException("终端密码无效，请重新启动启动器。");
-            args.AddRange(new[] { "-insecure", "-netconport", s.Kind == HostKind.Listen ? "2121" : "2122", "-netconpassword", s.ConsolePassword });
+            // CS2 dropped -netconport in 1.41.7.8; the console is now a named pipe.
+            // Both paths must be full form and must exist before cs2 starts.
+            args.AddRange(new[] { "-insecure", "-concommandpipe", ConsolePipe.Argument(session) });
         }
         if (s.Kind == HostKind.DedicatedIp && s.Token.Length > 0) args.AddRange(new[] { "+sv_setsteamaccount", s.Token });
         // Workshop requests require an initialized Steam game server. The app waits

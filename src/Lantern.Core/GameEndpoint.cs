@@ -2,11 +2,16 @@ using System.Text.RegularExpressions;
 
 namespace Lantern.Core;
 
-public sealed record GameEndpoint(int ProcessId, bool Dedicated, int? Port, string Password)
+/// <summary>
+/// A running CS2 process and the console channel it was launched with.
+/// Since 1.41.7.8 there is no console port or password: the engine opens the
+/// named pipes named on its command line, and pipe security is the OS's job.
+/// </summary>
+public sealed record GameEndpoint(int ProcessId, bool Dedicated, string? CommandPipe)
 {
     public int? RequestedMaxPlayers { get; init; }
-    // Do not expose process authentication material in diagnostics.
-    public override string ToString() => $"PID {ProcessId} · {(Dedicated ? "独立服务器" : "游戏客户端")} · {Port?.ToString() ?? "未启用终端"}";
+    public bool HasConsole => CommandPipe != null;
+    public override string ToString() => $"PID {ProcessId} · {(Dedicated ? "独立服务器" : "游戏客户端")} · {(CommandPipe ?? "未启用控制台")}";
 }
 
 public static class GameEndpointParser
@@ -24,9 +29,16 @@ public static class GameEndpointParser
             }
             return "";
         }
-        var port = Value("-netconport");
+        // -concommandpipe takes "<command>,<output>"; we only ever write to the first.
+        var pair = Value("-concommandpipe");
+        var command = pair.Split(',')[0].Trim();
         return new(pid, args.Skip(1).Any(a => a.Equals("-dedicated", StringComparison.OrdinalIgnoreCase)),
-            int.TryParse(port, out var n) && n is >= 1024 and <= 65535 ? n : null, Value("-netconpassword"))
+            IsPipe(command) ? command : null)
         { RequestedMaxPlayers = int.TryParse(Value("-maxplayers"), out var max) && max is >= 2 and <= 64 ? max : null };
     }
+
+    // Only accept the full Win32 form the engine itself requires.
+    static bool IsPipe(string value)
+        => value.StartsWith(@"\\.\pipe\", StringComparison.OrdinalIgnoreCase) && value.Length > 9
+        && value[9..].All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.');
 }
