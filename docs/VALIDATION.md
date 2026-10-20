@@ -1,3 +1,35 @@
+# 2026-10-21 v0.5.26 加入指令改为 steam://run（steam://connect 被 Steam 拒绝）
+
+用户实测报告：在 Steam 的「游戏服务器」窗口点连接会弹「失败 · 无法连接服务器，服务器指定的 app id 无效」。
+
+## 先证明服务器和 frp 都没问题
+
+用 A2S 查询协议在本地与公网入口各打 10 次：
+
+```
+LOCAL  A2S_INFO ok=10 fail=0 apps={730: 10} median=0ms
+PUBLIC A2S_INFO ok=10 fail=0 apps={730: 10} median=23ms
+```
+
+`app_id` 返回的就是 730（CS2），公网入口原样透传。frp 配置也确认正确：`CS2-27016 udp 127.0.0.1:27016 -> 10003`。所以"app id 无效"是 Steam 客户端的误报，不是服务器拒绝。这是 Steam 自 2023-09 起的已知问题，触发点正是「游戏服务器窗口点连接」与 `steam://connect/...` 两条路径。
+
+## 改法
+
+`Hosting.SteamConnectUrl` 返回值从 `steam://connect/<addr>` 改为 `steam://run/730//+connect <addr>/`。
+
+`steam://run` 让 Steam 直接带游戏参数启动 730，不经过它那条会搞混 app 的交接代码。这条在本机端到端验证通过：
+
+```
+PASS steam://run/730//+connect 127.0.0.1:27016/ pulled client PID 18796 into the server;
+     humans 0 -> 1; map de_inferno_minecraft; port 27016
+```
+
+## 顺带
+
+- "复制加入命令"改为复制同一条加入指令，不再只给 `connect ip:port` 的控制台命令；两个入口现在给的东西一致。
+- "复制加入说明"不再附控制台备选，改为说明聊天软件不会把自定义协议变成可点击链接，要按 `Win+R` 或粘到浏览器。
+- 按钮文案改为「复制加入指令（好友 Win+R 粘贴即进服）」，避免让人以为是可点击的聊天链接。
+
 
 # 2026-10-21 v0.5.24 好友零安装进服（Steam 邀请链接）
 

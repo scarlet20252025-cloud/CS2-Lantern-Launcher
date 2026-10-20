@@ -100,7 +100,7 @@ public partial class MainWindow
         {
             var link = await FreshLink();
             Clipboard.SetText(link);
-            Status("已复制 Steam 邀请链接：" + link + "。好友在聊天里点开就会进服，不必装启动器、也不必打开控制台。");
+            Status("已复制加入指令：" + link + "。对方按 Win+R 粘贴回车即可进服，不必装启动器、也不必打开控制台。");
         }
         catch (Exception ex) { Error(ex); }
     }

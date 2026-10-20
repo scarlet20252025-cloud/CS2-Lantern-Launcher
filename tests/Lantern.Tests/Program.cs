@@ -302,8 +302,8 @@ try
     Check(Hosting.ParseServerIdentity("player [A:1:999:999]") == null, "player identity not mistaken for server");
     Check(Hosting.ParseServerIdentity("steamid : [A:1:0:0]") == null, "empty Steam identity is not shareable");
     Reject(() => Hosting.JoinCommand("[A:1:0:0]", 27015), "empty P2P join command rejected");
-    Check(Hosting.SteamConnectUrl("10.126.126.5", 27015) == "steam://connect/10.126.126.5:27015", "steam invite link for IPv4");
-    Check(Hosting.SteamConnectUrl("::1", 27015) == "steam://connect/[::1]:27015", "steam invite link for IPv6");
+    Check(Hosting.SteamConnectUrl("10.126.126.5", 27015) == "steam://run/730//+connect 10.126.126.5:27015/", "steam invite link for IPv4");
+    Check(Hosting.SteamConnectUrl("::1", 27015) == "steam://run/730//+connect [::1]:27015/", "steam invite link for IPv6");
     Reject(() => Hosting.SteamConnectUrl("[A:1:123:456]", 27015), "steam invite link refuses a Steam identity");
     Reject(() => Hosting.SteamConnectUrl("10.0.0.1;quit", 27015), "steam invite link rejects address injection");
 

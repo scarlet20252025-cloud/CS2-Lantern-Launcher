@@ -120,12 +120,16 @@ public static class Hosting
     }
     // Steam handles this URL itself: it wakes the client and connects without the
     // player opening the console. Verified against a live launcher-owned server.
+    // steam://connect/<addr> is rejected by the Steam client's own handoff code
+    // ("App ID specified by the server is invalid", broken since 2023-09), so the
+    // shareable form launches the app explicitly and passes +connect as a game
+    // argument, which skips that code path.
     public static string SteamConnectUrl(string address, int port)
     {
         var target = Resolve(address, port);
         if (target.StartsWith("[A:", StringComparison.Ordinal))
             throw new ArgumentException("Steam 邀请链接只能携带 IP 地址，不能携带 Steam 服务器身份。请改用组网 IP，或让对方在控制台执行 connect。");
-        return "steam://connect/" + target;
+        return "steam://run/730//+connect " + target + "/";
     }
     static string Resolve(string address, int port)
     {

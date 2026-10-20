@@ -167,7 +167,7 @@ public partial class MainWindow : Window
                     // that a friend's network can reach this machine.
                     AddressBox.Text = "127.0.0.1";
                     var link = await FreshLink(true);
-                    if (!link.StartsWith("steam://connect/127.0.0.1:", StringComparison.Ordinal)) throw new Exception("Invite link built from an unexpected address: " + link);
+                    if (!link.StartsWith("steam://run/730//+connect 127.0.0.1:", StringComparison.Ordinal)) throw new Exception("Invite link built from an unexpected address: " + link);
                     OpenUri(link);
                     RoomStatus? after = null;
                     var deadline = DateTime.UtcNow.AddSeconds(90);
@@ -256,6 +256,16 @@ public partial class MainWindow : Window
                 }
                 if (Environment.GetCommandLineArgs().Contains("--terminal-smoke"))
                 {
+                    // The terminal talks to a launcher-owned server, so the smoke run
+                    // must own one; inheriting whatever happened to be running made
+                    // this check depend on the previous test's leftovers.
+                    if (HostBox.SelectedIndex == 0) HostBox.SelectedIndex = 2;
+                    var terminalRoot = RootBox.Text.Trim();
+                    if (await Task.Run(() => GameProcesses.Find(terminalRoot, true)) == null)
+                    {
+                        RunText.Text = "终端自检：先启动独立服务器…";
+                        await LaunchSelected();
+                    }
                     var window = Terminal(); window.Show(); await window.VerifyAndCapture(Path.Combine(dataDir, "terminal-smoke.png")); window.Close();
                 }
                 if (Environment.GetCommandLineArgs().Contains("--room-smoke"))
@@ -711,7 +721,12 @@ public partial class MainWindow : Window
     }
     async void CopyJoin(object sender, RoutedEventArgs e)
     {
-        try { Clipboard.SetText(await FreshJoin(false)); Status("已核验并复制当前房间加入命令。"); }
+        try
+        {
+            var link = await FreshLink();
+            Clipboard.SetText(link);
+            Status("已核验并复制加入指令：" + link + "。对方按 Win+R 粘贴回车即可，不需要控制台。");
+        }
         catch (Exception ex) { Error(ex); }
     }
     void ParseIdentity(object sender, RoutedEventArgs e)
@@ -761,12 +776,10 @@ public partial class MainWindow : Window
     {
         try
         {
-            var command = await FreshJoin(false);
             if (AddressBox.Text.Trim() == "127.0.0.1") throw new ArgumentException("127.0.0.1 不能分享给好友，请先读取房间或选择组网地址。");
             var link = await FreshLink();
-            Clipboard.SetText("点这个链接直接进服，不用装启动器，也不用开控制台：\n" + link +
-                "\n\n如果链接没反应，再在 CS2 控制台（~）粘贴：\n" + command +
-                "\n\n若使用组网 IP，请先加入房主同一个 EasyTier / Radmin VPN / ZeroTier 网络。\n加入失败时请保留游戏控制台报错给房主。");
+            Clipboard.SetText("复制下面这一整行，按 Win+R 粘贴回车就能进服（不用装启动器，也不用开控制台）：\n" + link +
+                "\n\n聊天软件不会把它变成可点击的链接，所以要按 Win+R 或粘到浏览器地址栏。\n若使用组网 IP，请先加入房主同一个 EasyTier / Radmin VPN / ZeroTier 网络。\n加入失败时请把弹窗内容告诉房主。");
             Status("好友加入说明已复制，请发给好友。");
         }
         catch (Exception ex) { Error(ex); }
