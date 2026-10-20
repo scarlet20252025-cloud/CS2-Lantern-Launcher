@@ -514,6 +514,9 @@ public partial class MainWindow : Window
             2 => "服务器独立运行；启动地图后，点击下方“本机加入此服务器”进入游戏。好友在“好友联机”页复制加入命令。",
             _ => "只启动一个游戏进程。加载地图后打开“好友联机”，读取实际房间并复制加入指令。此模式无法换图或管理人数：CS2 已移除终端端口，新通道只能读取启动器自己拉起的进程。"
         };
+        // The dedicated modes need the console to wait for Steam login and verify
+        // the loaded map, so it is not really optional there.
+        ConsoleCheck.IsChecked = HostBox.SelectedIndex != 0 || ConsoleCheck.IsChecked == true;
     }
     void ModeChanged(object sender, SelectionChangedEventArgs e) { if (ready && ModeBox.SelectedIndex == 0) RulesCheck.IsChecked = false; }
     MapEntry Selected() => MapList.SelectedItem as MapEntry ?? throw new ArgumentException("请先选择地图。");

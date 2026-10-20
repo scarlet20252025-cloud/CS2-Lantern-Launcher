@@ -55,7 +55,7 @@ public partial class TerminalWindow : Window
         PortInput.Text = "自动"; PortInput.IsReadOnly = true;
         flush.Tick += (_, _) => Flush(); flush.Start();
         Closed += (_, _) => { closed = true; connection?.Dispose(); flush.Stop(); };
-        Log("连接目标：" + (dedicated ? "独立服务器" : "游戏客户端") + "。自动读取该进程的实际终端端口；不会重启游戏、切换地图或连接另一种进程。游戏 UDP 端口 27015 与终端端口不是一回事。");
+        Log("连接目标：" + (dedicated ? "独立服务器" : "游戏客户端") + "。自动读取该进程的控制台管道；不会重启游戏、切换地图或连接另一种进程。命令走命名管道，回显来自该进程的 stdout，因此只有启动器自己拉起的服务器可管理。游戏 UDP 端口 27015 与终端管道不是一回事。");
     }
     void Log(string text)
     {
@@ -103,7 +103,9 @@ public partial class TerminalWindow : Window
         }
         var commandPipe = endpoint.CommandPipe!;
         connection?.Dispose(); var current = new GameConsole(); connection = current;
-        current.Output += Log;
+        // Display, not Output: protocol traffic (the status_json the room monitor
+        // polls every few seconds) must not bury the operator's own commands.
+        current.Display += Log;
         current.Disconnected += message =>
         {
             if (!closed) Dispatcher.BeginInvoke(() => { if (ReferenceEquals(connection, current)) { ConnectionText.Text = "已断开"; PortInput.IsEnabled = true; Log("连接结束：" + message); } });
@@ -112,7 +114,8 @@ public partial class TerminalWindow : Window
         {
             await current.Connect(commandPipe);
             if (closed) return;
-            ConnectionText.Text = $"已验证 · {(dedicated ? "独立服务器" : "游戏客户端")} · PID {endpoint.ProcessId} · {commandPipe}";
+            // Full path is in PortInput; repeating it here wraps under the buttons.
+            ConnectionText.Text = $"已验证 · {(dedicated ? "独立服务器" : "游戏客户端")} · PID {endpoint.ProcessId} · {System.IO.Path.GetFileName(commandPipe)}";
             PortInput.IsEnabled = false;
             RepairPanel.Visibility = Visibility.Collapsed;
             Log("[连接] 游戏已返回验证回显。下方将显示游戏控制台输出。");
@@ -280,6 +283,6 @@ public partial class TerminalWindow : Window
         var image = new RenderTargetBitmap((int)ActualWidth, (int)ActualHeight, 96, 96, PixelFormats.Pbgra32); image.Render(this);
         var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(image));
         using var file = File.Create(path); encoder.Save(file);
-        File.WriteAllText(Path.ChangeExtension(path, ".txt"), "PASS terminal window -> authenticated NetCon -> real game echo -> UI log -> status_json\n");
+        File.WriteAllText(Path.ChangeExtension(path, ".txt"), "PASS terminal window -> named pipe -> real game echo -> UI log -> status_json\n");
     }
 }

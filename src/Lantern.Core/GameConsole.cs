@@ -59,6 +59,11 @@ public sealed class GameConsole : IDisposable
     // so Dispose must be idempotent or teardown throws over the real error.
     int disposed;
     public event Action<string>? Output;
+    /// <summary>
+    /// Same lines as <see cref="Output"/>, minus protocol traffic (the status_json
+    /// dump the room monitor polls every few seconds). The UI log subscribes here.
+    /// </summary>
+    public event Action<string>? Display;
     public event Action<string>? Disconnected;
     public bool IsReady { get; private set; }
     public string? CommandPipe => pipe?.CommandPath;
@@ -89,7 +94,31 @@ public sealed class GameConsole : IDisposable
     void OnLine(string text)
     {
         if (text.Trim() == probe) { verified.TrySetResult(); return; }
-        if (text.Length > 0) Output?.Invoke(text);
+        if (text.Length == 0) return;
+        Output?.Invoke(text);
+        if (!Protocol(text)) Display?.Invoke(text);
+    }
+
+    /// <summary>
+    /// Recognises the machine-readable traffic our own probes generate, so it can
+    /// stay out of the operator's log while still reaching the parsers.
+    ///
+    /// status_json prints a multi-line JSON object; the room monitor asks for one
+    /// every few seconds, which would otherwise fill the whole window. Echo
+    /// markers are only ever ours, so they are dropped too.
+    /// </summary>
+    static bool Protocol(string text)
+    {
+        var trimmed = text.Trim();
+        // Echo markers are ours by construction, including the one appended to the
+        // closing brace of a JSON dump ("}LANTERN_STATUS_…").
+        if (trimmed.Contains("LANTERN_", StringComparison.Ordinal)) return true;
+        if (trimmed is "{" or "}") return true;
+        if (trimmed.StartsWith("}", StringComparison.Ordinal)) return true;
+        // Body of the pretty-printed object: tab-indented "key": value.
+        // Not a bare quote check: bot join events also start with a quote
+        // ('"Bot3<3><BOT>" switched from team…') and those must stay visible.
+        return text.StartsWith("\t", StringComparison.Ordinal);
     }
 
     async Task Write(string command)
