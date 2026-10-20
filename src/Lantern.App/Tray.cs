@@ -21,6 +21,8 @@ public partial class MainWindow
 
     void BuildTray()
     {
+        // Automated runs get no tray icon: a hidden icon would outlive the check.
+        if (smoke) return;
         tray = new NotifyIcon
         {
             Icon = LoadTrayIcon(),
@@ -90,7 +92,9 @@ public partial class MainWindow
 
     void OnClosing(object? sender, CancelEventArgs e)
     {
-        if (exiting) { Cleanup(); return; }
+        // Smoke runs must be able to end on their own Close(); honouring the tray
+        // preference would leave an invisible process behind for every check.
+        if (exiting || smoke) { Cleanup(); return; }
         if (prefs.CloseToTray)
         {
             // Cancel and hide instead of closing: the same process keeps running,

@@ -499,13 +499,20 @@ public partial class MainWindow : Window
         JoinMainButton.Visibility = HostBox.SelectedIndex == 0 ? Visibility.Collapsed : Visibility.Visible;
         RestartServerButton.Visibility = JoinMainButton.Visibility;
         LaunchButton.Content = HostBox.SelectedIndex == 0 ? "启动所选地图  →" : "启动 / 切换服务器地图  →";
+        // The console is what makes runtime management (map switching, bots,
+        // room verification) possible, and only the launcher-owned dedicated
+        // server can have one. Say so where the choice is made.
+        ConsoleCheck.IsEnabled = HostBox.SelectedIndex != 0;
+        ConsoleCheck.Content = HostBox.SelectedIndex == 0
+            ? "外部终端对私服模式 · 本机模式已不支持（详见终端窗口）"
+            : "外部终端对私服模式（-insecure，必需）";
         roomGeneration++; transitionUnverified = false; observedRoom = null; roomNotice = null;
         if (AddressBox != null) { lastRoom = null; AddressBox.Clear(); }
         HostHint.Text = HostBox.SelectedIndex switch
         {
-            1 => "独立进程开服。房主另外启动游戏，用 127.0.0.1 加入；好友使用可达的 IP。",
+            1 => "独立进程开服，启动器自己拉起服务器，因此换图、人数与人机管理都可用。关闭启动器会同时停服。",
             2 => "服务器独立运行；启动地图后，点击下方“本机加入此服务器”进入游戏。好友在“好友联机”页复制加入命令。",
-            _ => "只启动一个游戏进程。加载地图后打开“好友联机”，读取实际房间并复制加入指令。好友列表加入失败时，改用服务器身份或组网地址。"
+            _ => "只启动一个游戏进程。加载地图后打开“好友联机”，读取实际房间并复制加入指令。此模式无法换图或管理人数：CS2 已移除终端端口，新通道只能读取启动器自己拉起的进程。"
         };
     }
     void ModeChanged(object sender, SelectionChangedEventArgs e) { if (ready && ModeBox.SelectedIndex == 0) RulesCheck.IsChecked = false; }
