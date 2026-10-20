@@ -136,7 +136,7 @@ P2P 修改有原始字节备份和修改后 SHA-256；恢复前会比对文件�
 
 ## 构建与检查
 
-需要 .NET 10 SDK，可用项目 `tools/dotnet/dotnet.exe`（本次构建所用的本地工具链）或已安装的 SDK。
+需要 .NET 10 SDK（`dotnet --version` 应 ≥ 10.0）。本机开发时曾用 `tools/dotnet/dotnet.exe` 这份自带工具链，它**不在仓库里**（`.gitignore` 排除了 `tools/dotnet/`、`tools/vrf-cli/`、`artifacts/`），克隆后请用自己安装的 SDK；`build.ps1` 会自动回落到 `dotnet`。
 
 ```powershell
 dotnet build src/Lantern.App -c Release
@@ -148,3 +148,16 @@ dotnet publish src/Lantern.App -c Release -r win-x64 --self-contained true -p:Pu
 测试不启动游戏、不修改真实游戏配置。`--live` 仅读取实际 Steam 和 VPK；`--network` 读取公开工坊元数据。GUI 的 `--smoke` 扫描后输出自身 WPF 渲染图和基础性能数据并退出，`--smoke-covers` 额外获取前 6 张封面；测试时请指定单独 `LANTERN_DATA_DIR`。
 
 调查依据见 [docs/RESEARCH.md](docs/RESEARCH.md)，本机验收结果见 [docs/VALIDATION.md](docs/VALIDATION.md)。
+
+## 仓库里有什么
+
+| 路径 | 内容 |
+|---|---|
+| `src/Lantern.Core` | 纯 .NET 10 类库：管道传输、房间配置、地图扫描、人机管理 |
+| `src/Lantern.App` | WPF 前端（`AssemblyName=CS2Lantern`） |
+| `tests/Lantern.Tests` | 124 项断言，含一个假引擎（命名管道 + 假 stdout） |
+| `tools/RelayProbe` | P2P 探测小工具 |
+| `build.ps1` | `-Check` 跑测试，`-Portable` 出单文件产物 |
+| `Start.cmd` | 启动 `artifacts\` 下**最新**的一份构建 |
+
+`artifacts/`、`tools/dotnet/`、`tools/vrf-cli/` 都不入库：前两个是本机产物与工具链，第三个是 113 MB 的第三方 VPK 查看器（构建不引用）。
