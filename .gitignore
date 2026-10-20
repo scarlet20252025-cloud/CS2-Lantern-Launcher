@@ -4,3 +4,4 @@ tools/dotnet/
 tools/*.zip
 artifacts/
 *.user
+tools/vrf-cli/
