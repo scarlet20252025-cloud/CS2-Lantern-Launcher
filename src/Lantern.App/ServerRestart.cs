@@ -61,6 +61,21 @@ public partial class MainWindow
         }
         throw new InvalidOperationException("恢复服务器未在 45 秒内就绪，已停止自动尝试。诊断：" + logPath);
     }
+    // The terminal can raise the ceiling without making the operator hunt for the
+    // spinbox on another window; the number is still only a launch argument, so it
+    // cannot take effect without a restart.
+    async Task RaiseCapacity(int cap)
+    {
+        if (launching) throw new InvalidOperationException("已有开图或重启操作正在执行。");
+        var current = Settings().MaxPlayers;
+        if (cap <= current) throw new InvalidOperationException($"当前上限已是 {current}，无需重启。");
+        if (!smoke && MessageBox.Show(this, $"人数上限将从 {current} 提高到 {cap}。\n\n这是服务器进程的启动参数，必须重启独立服务器才能生效；当前对局会结束，所有玩家需要重新加入。\n\n游戏客户端不会关闭。", "提高人数上限并重启", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel) != MessageBoxResult.OK)
+            throw new InvalidOperationException("已取消，未修改任何设置。");
+        PlayersBox.Text = cap.ToString();
+        Save();
+        await RestartDedicatedServer();
+        if (terminal != null && !terminal.IsClosed) terminal.UpdateCapacity(cap);
+    }
     async void RestartServerClick(object sender, RoutedEventArgs e)
     {
         if (launching) { Status("正在开图或重启，请等待本次操作结束。"); return; }

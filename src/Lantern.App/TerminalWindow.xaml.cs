@@ -30,6 +30,38 @@ public partial class TerminalWindow : Window
     public bool Dedicated => dedicated;
     public bool IsClosed => closed;
     public Func<Task>? EnableTerminalRequested { get; set; }
+    // Raising the ceiling means restarting the server, which only the main window
+    // can do. The terminal asks; it never kills a process itself.
+    public Func<int, Task>? RaiseCapacityRequested { get; set; }
+    int? requestedCapacity;
+    public void UpdateCapacity(int? cap)
+    {
+        if (closed) return;
+        requestedCapacity = cap;
+        if (cap == null)
+        {
+            CapacityText.Text = "人数上限：无法读取（未连接或进程已退出）";
+            CapacityHint.Text = "上限来自服务器进程的启动参数；连上服务器后会在这里显示。";
+            CapRow.Visibility = Visibility.Collapsed; RaiseCapButton.Visibility = Visibility.Collapsed;
+            return;
+        }
+        CapacityText.Text = $"人数上限：{cap} 人（当前进程的启动参数）";
+        CapacityHint.Text = "改主界面的输入框或换图都不会改变已启动的进程；要生效必须重启服务器。下面可以直接改并重启。";
+        CapRow.Visibility = Visibility.Visible; RaiseCapButton.Visibility = Visibility.Visible;
+        if (CapInput.Text.Length == 0) CapInput.Text = cap.ToString();
+    }
+    async void RaiseCapClick(object sender, RoutedEventArgs e)
+    {
+        if (RaiseCapacityRequested == null) return;
+        if (!int.TryParse(CapInput.Text, out var cap) || cap is < 2 or > 64)
+        { CapacityText.Text = "人数上限需要填 2–64 的整数。"; return; }
+        if (requestedCapacity.HasValue && cap < requestedCapacity.Value)
+        { CapacityText.Text = $"新上限 {cap} 低于当前 {requestedCapacity}。这里只用于提高上限；要降低请正常停服后改主界面再开服。"; return; }
+        RaiseCapButton.IsEnabled = false;
+        try { await RaiseCapacityRequested(cap); }
+        catch (Exception ex) { CapacityText.Text = "未完成 · " + ex.Message; }
+        finally { if (!closed) RaiseCapButton.IsEnabled = true; }
+    }
     public void ReportRepair(string message) { ActionState.Text = message; Log(message); }
     public void ResetConnection() { connection?.Dispose(); connection = null; }
     async void EnableTerminalClick(object sender, RoutedEventArgs e)
@@ -118,6 +150,7 @@ public partial class TerminalWindow : Window
             ConnectionText.Text = $"已验证 · {(dedicated ? "独立服务器" : "游戏客户端")} · PID {endpoint.ProcessId} · {System.IO.Path.GetFileName(commandPipe)}";
             PortInput.IsEnabled = false;
             RepairPanel.Visibility = Visibility.Collapsed;
+            UpdateCapacity(endpoint.RequestedMaxPlayers);
             Log("[连接] 游戏已返回验证回显。下方将显示游戏控制台输出。");
         }
         catch { ConnectionText.Text = $"未连接 · PID {endpoint.ProcessId} 的终端 {commandPipe} 尚未就绪或验证失败，请稍后重试"; throw; }
@@ -226,7 +259,7 @@ public partial class TerminalWindow : Window
             if (total < before.Humans) throw new ArgumentException("目标总人数少于已连接真人，未执行调整。");
             var endpoint = await Task.Run(() => GameProcesses.Find(gameRoot, dedicated));
             if (endpoint?.RequestedMaxPlayers is int cap && total > cap)
-                throw new InvalidOperationException($"目标 {total} 人超过当前进程请求的上限 {cap}。请在主界面把人数上限改为至少 {total}，正常重启对应游戏／服务器后再应用。此次未清除人机；修改输入框或换图不会更新旧进程。");
+                throw new InvalidOperationException($"目标 {total} 人超过当前进程请求的上限 {cap}。上限是服务器启动参数，改输入框或换图都不会生效；请在终端上方“人数上限”一栏提高到至少 {total} 并重启服务器。此次未清除人机。");
             await SendCommand(command);
             int stable = 0; var actual = before;
             for (int i = 0; i < 10; i++)

@@ -97,6 +97,7 @@ public partial class TerminalWindow
 
     public async Task CaptureCategories(string directory)
     {
+        var report = new List<string>();
         for (int i = 0; i < CommandTabs.Items.Count; i++)
         {
             CommandTabs.SelectedIndex = i;
@@ -104,6 +105,20 @@ public partial class TerminalWindow
             var image = new RenderTargetBitmap((int)ActualWidth, (int)ActualHeight, 96, 96, PixelFormats.Pbgra32);
             image.Render(this); var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(image));
             using var output = File.Create(Path.Combine(directory, $"terminal-category-{i}.png")); png.Save(output);
+            // A control squeezed to nothing looks identical to a control that was
+            // never added, so measure instead of judging by eye.
+            var tab = (TabItem)CommandTabs.Items[i];
+            if (tab.Content is ScrollViewer view)
+            {
+                view.UpdateLayout();
+                report.Add($"[{(string)tab.Header}] viewport {view.ViewportHeight:0} / extent {view.ExtentHeight:0} / scrollable {(view.ScrollableHeight > 0 ? view.ScrollableHeight.ToString("0") : "none")}");
+                foreach (var named in new[] { "TeamFillButton" })
+                {
+                    if (view.FindName(named) is FrameworkElement element)
+                        report.Add($"  {named}: {element.ActualWidth:0}x{element.ActualHeight:0} at y={element.TranslatePoint(new Point(0, 0), view).Y:0}");
+                }
+            }
         }
+        File.WriteAllText(Path.Combine(directory, "terminal-layout.txt"), string.Join("\n", report) + "\n");
     }
 }

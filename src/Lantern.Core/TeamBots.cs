@@ -43,7 +43,7 @@ public static class TeamBots
         if (initial.Humans == 0 && (await console.ReadStatusText()).Contains("(hibernating)", StringComparison.Ordinal))
             return new(0, count, team, "服务器正在空房休眠，请先加入游戏再添加人机。");
         if (initial.Humans + initial.Bots + count > capacity)
-            throw new ArgumentException($"添加后超过当前进程的人数上限 {capacity}，未执行。请减少数量或调整启动人数后重启服务器。");
+            throw new ArgumentException($"添加后超过当前进程的人数上限 {capacity}，未执行。上限是服务器启动参数，改输入框或换图都不会生效；请在终端上方“人数上限”一栏提高到至少 {initial.Humans + initial.Bots + count} 并重启服务器。");
         var logging = await console.ExecuteCaptured("log");
         bool restoreLogging = logging.Contains("not currently logging", StringComparison.OrdinalIgnoreCase);
         int added = 0;

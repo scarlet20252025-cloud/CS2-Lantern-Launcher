@@ -184,6 +184,24 @@ public partial class MainWindow : Window
                     File.WriteAllText(Path.Combine(dataDir, "invite-smoke.txt"),
                         $"PASS {link} pulled client PID {client.ProcessId} into the server; humans {before.Humans} -> {after.Humans}; map {after.Map}; port {after.Port}");
                 }
+                if (Environment.GetCommandLineArgs().Contains("--capacity-smoke"))
+                {
+                    // Proves the ceiling really reaches the next process, instead of
+                    // only proving that a control is clickable.
+                    if (HostBox.SelectedIndex == 0) HostBox.SelectedIndex = 2;
+                    var capRoot = RootBox.Text.Trim();
+                    if (await Task.Run(() => GameProcesses.Find(capRoot, true)) == null) await LaunchSelected();
+                    var tool = Terminal(); tool.Show(); await tool.ConnectGame();
+                    var beforeCap = (await Task.Run(() => GameProcesses.Find(capRoot, true)))!.RequestedMaxPlayers;
+                    int target = beforeCap!.Value + 2;
+                    var beforePid = GameProcesses.Find(capRoot, true)!.ProcessId;
+                    await RaiseCapacity(target);
+                    var afterCap = (await Task.Run(() => GameProcesses.Find(capRoot, true)))!;
+                    if (afterCap.ProcessId == beforePid) throw new Exception("Capacity change did not restart the server.");
+                    if (afterCap.RequestedMaxPlayers != target) throw new Exception($"New process still runs -maxplayers {afterCap.RequestedMaxPlayers}, expected {target}.");
+                    File.WriteAllText(Path.Combine(dataDir, "capacity-smoke.txt"),
+                        $"PASS ceiling {beforeCap} -> {target} reached the new process; dedicated PID {beforePid} -> {afterCap.ProcessId}");
+                }
                 if (Environment.GetCommandLineArgs().Contains("--transition-smoke")) await TestRoomTransitions();
                 if (Environment.GetCommandLineArgs().Contains("--official-layout"))
                 {
@@ -215,6 +233,7 @@ public partial class MainWindow : Window
                 if (Environment.GetCommandLineArgs().Contains("--terminal-layout"))
                 {
                     var window = new TerminalWindow("", Settings().Kind != HostKind.Listen) { Owner = this };
+                    window.RaiseCapacityRequested = RaiseCapacity;
                     window.Show(); window.UpdateLayout(); await window.CaptureCategories(dataDir);
                     var image = new RenderTargetBitmap((int)window.ActualWidth, (int)window.ActualHeight, 96, 96, PixelFormats.Pbgra32);
                     image.Render(window); var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(image));
@@ -802,6 +821,7 @@ public partial class MainWindow : Window
         if (terminal != null) return terminal;
         terminal = new TerminalWindow(RootBox.Text.Trim(), dedicated) { Owner = this };
         terminal.EnableTerminalRequested = EnableClientTerminal;
+        terminal.RaiseCapacityRequested = RaiseCapacity;
         terminal.Closed += (_, _) => terminal = null;
         return terminal;
     }
