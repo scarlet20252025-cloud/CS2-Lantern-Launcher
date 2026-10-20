@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup><OutputType>WinExe</OutputType><TargetFramework>net10.0-windows</TargetFramework><UseWPF>true</UseWPF><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><AssemblyName>CS2Lantern</AssemblyName><Version>0.5.22</Version><ApplicationIcon>Assets/lantern.ico</ApplicationIcon></PropertyGroup>
+  <ItemGroup><Resource Include="Assets/lantern.ico"/><Resource Include="Assets/lantern.png"/></ItemGroup>
+  <ItemGroup><Resource Include="Assets/Maps/*.png"/></ItemGroup>
+  <ItemGroup><ProjectReference Include="../Lantern.Core/Lantern.Core.csproj" /></ItemGroup>
+  <ItemGroup><PackageReference Include="System.Management" Version="10.0.0" /></ItemGroup>
+</Project>

@@ -1,0 +1,6 @@
+**/bin/
+**/obj/
+tools/dotnet/
+tools/*.zip
+artifacts/
+*.user
