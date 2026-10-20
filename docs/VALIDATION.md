@@ -1,3 +1,35 @@
+
+# 2026-10-21 v0.5.24 好友零安装进服（Steam 邀请链接）
+
+起因：用户指出「不进入地图就不能通过 ~ 打开控制台加入游戏」，而要求朋友为了进服再装一个启动器并不合理。
+
+## 结论
+
+`steam://connect/<ip>:<port>` 可以让没装启动器、没打开控制台的玩家直接进服。这项能力已在本机端到端验证，不是只生成了一个字符串。
+
+## 实测
+
+```
+PASS steam://connect/127.0.0.1:27016 pulled client PID 18796 into the server;
+     humans 0 -> 1; map fruitninja; port 27016
+```
+
+`--invite-smoke` 的判定方式是读服务器自己的 `status_json`：先记录真人计数，打开链接，再轮询到真人计数确实增加，同时要求存在一个非独立模式的 cs2 进程。仅凭「打开链接没有报错」不算通过。
+
+## 同时移除房间密码
+
+`HostSettings.Password`、`sv_password` 写入、`password "…";` 前缀一并删除。理由：邀请链接无法携带密码，保留密码只会让好友多点一步。`JoinCommand`/`ReconnectCommand` 现在都只接受地址与端口。
+
+## 已知边界
+
+- 邀请链接只能携带 IP。Steam 服务器身份 `[A:…]` 无法放进链接，P2P 模式仍退回复制控制台命令。
+- 本机用 `127.0.0.1` 验证，**好友从自己的网络能否连进来仍未实测**；这条从 v0.5 起一直未验证。
+- 组网 IP（EasyTier / Radmin / ZeroTier）双方必须先在同一虚拟网络内。
+
+## 测试
+
+`ALL 124 CHECKS PASSED`（新增 4 条邀请链接用例，删除 1 条密码用例）。启动器自检 `--smoke --restart-smoke --terminal-smoke --tab-layout` 全部 PASS，独立服务器 PID 28748 -> 21412，客户端 PID 18796 保持不变。
+
 # v0.5 验证（2026-10-12）
 
 - Release 发布通过，56 项核心检查通过；新增订阅缓存、仅订阅变化的指纹检测、粘连链接批量解析、空 Steam P2P 身份拒绝。

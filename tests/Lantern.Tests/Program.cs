@@ -251,7 +251,7 @@ try
     Reject(() => Vpk.ReadMapNames(broken), "corrupt VPK rejected");
     var scan = Discovery.Scan(new Installation(appRoot, new[] { library }));
     Check(scan.Maps.Count == 1 && scan.Maps[0].Title == "测试地图" && scan.Warnings.Count == 1, "scan survives corrupt file and loads local title");
-    var map = scan.Maps[0]; var settings = new HostSettings { ConsolePassword = new string('a', 48), Kind = HostKind.Listen, ModeIndex = 1, Bots = 3, ApplyRules = true };
+    var map = scan.Maps[0]; var settings = new HostSettings { Kind = HostKind.Listen, ModeIndex = 1, Bots = 3, ApplyRules = true };
     var roots = Discovery.WorkshopRoots(new Installation(appRoot, new[] { library }));
     Check(MapDeletion.Package(map, roots) == dir, "deletion resolves selected workshop package only");
     Reject(() => MapDeletion.Package(new MapEntry { Official = true, FilePath = vpkPath }, roots), "official map deletion forbidden");
@@ -290,19 +290,22 @@ try
     Check(dedicated.Arguments.Contains("-dedicated") && dedicated.Boot.Contains("host_workshop_map 3070293560"), "dedicated uses server workshop command");
     Check(dedicated.Arguments.Contains("+map") && !dedicated.Arguments.Contains("+exec"), "dedicated workshop waits for initialization before boot request");
     Reject(() => Hosting.Build(map, settings with { Name = "bad\nquit" }, "test"), "cfg newline injection rejected");
-    Reject(() => Hosting.Build(map, settings with { Password = "bad;quit" }, "test"), "password command injection rejected");
     Reject(() => Hosting.Build(map, settings with { Bots = 10 }, "test"), "reserve slot for host");
     Reject(() => Hosting.Build(map, settings with { Port = 70000 }, "test"), "invalid port rejected");
     Reject(() => Hosting.Build(map, settings with { Kind = HostKind.DedicatedP2P, Token = new string('a', 32) }, "test"), "P2P GSLT conflict rejected");
     Reject(() => Hosting.Build(new MapEntry { Id = map.Id }, settings, "test"), "undownloaded listen map rejected");
-    Check(Hosting.JoinCommand("192.168.1.20", 27015, "hello") == "password \"hello\"; connect 192.168.1.20:27015", "IPv4 and password join command");
-    Check(Hosting.JoinCommand("::1", 27015, "") == "connect [::1]:27015", "IPv6 join command");
-    Check(Hosting.JoinCommand("[A:1:123:456]", 27015, "") == "connect [A:1:123:456]", "server P2P identity join command");
-    Reject(() => Hosting.JoinCommand("127.0.0.1;quit", 27015, ""), "join address injection rejected");
+    Check(Hosting.JoinCommand("192.168.1.20", 27015) == "connect 192.168.1.20:27015", "IPv4 join command");
+    Check(Hosting.JoinCommand("::1", 27015) == "connect [::1]:27015", "IPv6 join command");
+    Check(Hosting.JoinCommand("[A:1:123:456]", 27015) == "connect [A:1:123:456]", "server P2P identity join command");
+    Reject(() => Hosting.JoinCommand("127.0.0.1;quit", 27015), "join address injection rejected");
     Check(Hosting.ParseServerIdentity("player [A:1:999:999]\nsteamid : [A:1:123:456] (12345)") == "[A:1:123:456]", "P2P parser accepts only server identity line");
     Check(Hosting.ParseServerIdentity("player [A:1:999:999]") == null, "player identity not mistaken for server");
     Check(Hosting.ParseServerIdentity("steamid : [A:1:0:0]") == null, "empty Steam identity is not shareable");
-    Reject(() => Hosting.JoinCommand("[A:1:0:0]", 27015, ""), "empty P2P join command rejected");
+    Reject(() => Hosting.JoinCommand("[A:1:0:0]", 27015), "empty P2P join command rejected");
+    Check(Hosting.SteamConnectUrl("10.126.126.5", 27015) == "steam://connect/10.126.126.5:27015", "steam invite link for IPv4");
+    Check(Hosting.SteamConnectUrl("::1", 27015) == "steam://connect/[::1]:27015", "steam invite link for IPv6");
+    Reject(() => Hosting.SteamConnectUrl("[A:1:123:456]", 27015), "steam invite link refuses a Steam identity");
+    Reject(() => Hosting.SteamConnectUrl("10.0.0.1;quit", 27015), "steam invite link rejects address injection");
 
     var original = "\"GameInfo\"\r\n{\r\n // Valve { keep comments }\r\n FileSystem { SteamAppId 730 ForceFixedAppIds 1 }\r\n ConVars { \"cl_usesocketsforloopback\" \"0\" }\r\n}\r\n";
     var patched = RelayPatch.PatchText(original);
@@ -344,7 +347,7 @@ try
     Check(!RoomTransitions.SameEndpoint(roomBefore, roomBefore with { Identity = "[A:1:124:456]" }) && !RoomTransitions.SameEndpoint(roomBefore, roomBefore with { Port = 27016 }), "identity or port change invalidates old endpoint");
     Check(!RoomTransitions.Matches(roomBefore with { Addon = "999" }, map), "same filename from wrong workshop addon is not success");
     Check(!RoomTransitions.Matches(roomBefore with { Map = "de_dust2" }, officialTarget), "official target with old workshop addon is not success");
-    Check(RoomTransitions.ReconnectCommand("10.126.126.5", 27015, "") == "disconnect; connect 10.126.126.5:27015", "reconnect command only disconnects executing friend");
+    Check(RoomTransitions.ReconnectCommand("10.126.126.5", 27015) == "disconnect; connect 10.126.126.5:27015", "reconnect command only disconnects executing friend");
     Reject(() => RoomTransitions.ForExistingRoom(new MapEntry { Id = "123", ValidatedRemote = true }, settings with { Kind = HostKind.DedicatedIp }, "remote_switch"), "preserving room requires downloaded map");
     Check(!RoomTransitions.SameEndpoint(roomBefore with { Identity = "[A:1:0:0]" }, roomBefore with { Identity = "[A:1:0:0]" }), "invalid Steam identity cannot prove endpoint continuity");
     Check(RoomTransitions.ConsoleCommands(switchPlan.Boot).Contains("changelevel ") && !RoomTransitions.ConsoleCommands(switchPlan.Boot).Contains("exec "), "live switching bypasses restricted workshop cfg execution");

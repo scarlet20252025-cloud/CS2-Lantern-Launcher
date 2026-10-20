@@ -67,7 +67,7 @@ public partial class MainWindow
         finally { readingRoom = false; }
     }
 
-    async Task<string> FreshJoin(bool reconnect)
+    async Task<(RoomStatus Room, string Address)> VerifiedTarget(bool allowLoopback = false)
     {
         if (launching) throw new InvalidOperationException("正在换图，请等待地图与房间核验完成后再复制。");
         if (transitionUnverified) throw new InvalidOperationException("上次换图尚未核实。请先点击“读取当前房间与加入地址”，确认实际地图后再分享。");
@@ -75,9 +75,34 @@ public partial class MainWindow
         var room = await Terminal().GetRoomStatus();
         if (generation != roomGeneration || launching) throw new InvalidOperationException("房间正在变化，请稍后重试。");
         DisplayRoom(room);
-        if (AddressBox.Text.Trim() == "127.0.0.1") throw new ArgumentException("127.0.0.1 不能分享给好友，请选择组网或公网地址。");
-        return reconnect ? RoomTransitions.ReconnectCommand(AddressBox.Text, room.Port, PasswordBox.Password)
-            : Hosting.JoinCommand(AddressBox.Text, room.Port, PasswordBox.Password);
+        if (!allowLoopback && AddressBox.Text.Trim() == "127.0.0.1") throw new ArgumentException("127.0.0.1 不能分享给好友，请选择组网或公网地址。");
+        return (room, AddressBox.Text.Trim());
+    }
+
+    async Task<string> FreshJoin(bool reconnect)
+    {
+        var (room, address) = await VerifiedTarget();
+        return reconnect ? RoomTransitions.ReconnectCommand(address, room.Port)
+            : Hosting.JoinCommand(address, room.Port);
+    }
+
+    // The friend clicks this link instead of opening the console: Steam wakes the
+    // client and connects. Verified against a live launcher-owned server.
+    async Task<string> FreshLink(bool allowLoopback = false)
+    {
+        var (room, address) = await VerifiedTarget(allowLoopback);
+        return Hosting.SteamConnectUrl(address, room.Port);
+    }
+
+    async void CopyLink(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var link = await FreshLink();
+            Clipboard.SetText(link);
+            Status("已复制 Steam 邀请链接：" + link + "。好友在聊天里点开就会进服，不必装启动器、也不必打开控制台。");
+        }
+        catch (Exception ex) { Error(ex); }
     }
 
     async void CopyReconnect(object sender, RoutedEventArgs e)
@@ -102,13 +127,36 @@ public partial class MainWindow
             }
             // The client has no console any more (-netconport is gone and a
             // Steam-launched process gives us no stdout), so we cannot push a
-            // connect command into it. Hand the user the command instead.
+            // connect command into it. A Steam link needs no console at all.
             if (generation != roomGeneration || launching) throw new InvalidOperationException("房间已变化，请稍后重试。");
             DisplayRoom(room);
             var address = HostBox.SelectedIndex == 2 ? room.Identity : "127.0.0.1";
-            var command = Hosting.JoinCommand(address, room.Port, PasswordBox.Password);
-            Clipboard.SetText(command);
-            Status("已复制加入命令：" + command + "。请在游戏控制台粘贴执行；服务器保持运行。");
+            if (address.StartsWith("[A:", StringComparison.Ordinal))
+            {
+                var command = Hosting.JoinCommand(address, room.Port);
+                Clipboard.SetText(command);
+                Status("P2P 身份无法生成邀请链接，已复制加入命令：" + command + "。请在游戏控制台粘贴执行；服务器保持运行。");
+                return;
+            }
+            var link = Hosting.SteamConnectUrl(address, room.Port);
+            int before = room.Humans;
+            OpenUri(link);
+            Status("已请求 Steam 加入本机服务器，正在确认是否真的连入…");
+            var deadline = DateTime.UtcNow.AddSeconds(45);
+            while (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(1500);
+                RoomStatus now;
+                try { now = await Terminal().GetRoomStatus(); }
+                catch { continue; }
+                if (now.Humans > before)
+                {
+                    DisplayRoom(now, "本机客户端已连入服务器。");
+                    Status("本机客户端已连入服务器（真人 " + now.Humans + "）。");
+                    return;
+                }
+            }
+            Status("已打开 " + link + "，但 45 秒内没有检测到本机玩家进入。若 Steam 没有唤起游戏，请确认它已登录，或手动复制该链接。");
         }
         catch (Exception ex) { Error(ex); }
     }

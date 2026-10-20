@@ -1,4 +1,4 @@
-﻿namespace Lantern.Core;
+namespace Lantern.Core;
 
 public static class RoomTransitions
 {
@@ -25,6 +25,6 @@ public static class RoomTransitions
     public static bool SameEndpoint(RoomStatus before, RoomStatus after) =>
         before.Port == after.Port && Hosting.ParseServerIdentity("steamid : " + before.Identity) != null && before.Identity == after.Identity;
 
-    public static string ReconnectCommand(string address, int port, string password) =>
-        "disconnect; " + Hosting.JoinCommand(address, port, password);
+    public static string ReconnectCommand(string address, int port) =>
+        "disconnect; " + Hosting.JoinCommand(address, port);
 }

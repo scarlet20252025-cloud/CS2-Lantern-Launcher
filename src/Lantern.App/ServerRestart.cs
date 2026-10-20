@@ -76,7 +76,7 @@ public partial class MainWindow
         {
             var settings = Settings(); var plan = Plan(); var root = RootBox.Text.Trim();
             if (settings.Kind == HostKind.Listen) throw new InvalidOperationException("此功能只重启独立服务器，请先选择独立开服模式。");
-            if (settings.Kind == HostKind.DedicatedP2P && !RelayPatch.Enabled(root)) throw new InvalidOperationException("请先在高级页启用 Steam P2P 配置。");
+            if (settings.Kind == HostKind.DedicatedP2P && !RelayPatch.Enabled(root)) throw new InvalidOperationException("请先在“服务器”页启用 Steam P2P 配置。");
             Hosting.WriteConfigs(root, plan); // Validate destination before stopping anything.
             launching = true; IsEnabled = false;
             var endpoint = await Task.Run(() => GameProcesses.Find(root, true));

@@ -150,6 +150,40 @@ public partial class MainWindow : Window
                     finally { launching = false; }
                     File.WriteAllText(Path.Combine(dataDir, "same-map-smoke.txt"), $"PASS current selected map reload -> verified actual map and endpoint; total {speedCheck.ElapsedMilliseconds} ms including engine loading\n" + RunText.Text);
                 }
+                if (Environment.GetCommandLineArgs().Contains("--invite-smoke"))
+                {
+                    // Proves the link the launcher hands out actually pulls a client in,
+                    // instead of only proving that a string was assembled.
+                    if (HostBox.SelectedIndex == 0) HostBox.SelectedIndex = 2;
+                    var inviteRoot = RootBox.Text.Trim();
+                    if (await Task.Run(() => GameProcesses.Find(inviteRoot, true)) == null)
+                    {
+                        RunText.Text = "邀请链接核验：先启动独立服务器…";
+                        await LaunchSelected();
+                    }
+                    await Terminal().ConnectGame();
+                    var before = await Terminal().GetRoomStatus();
+                    // Loopback still proves the mechanism end to end; it cannot prove
+                    // that a friend's network can reach this machine.
+                    AddressBox.Text = "127.0.0.1";
+                    var link = await FreshLink(true);
+                    if (!link.StartsWith("steam://connect/127.0.0.1:", StringComparison.Ordinal)) throw new Exception("Invite link built from an unexpected address: " + link);
+                    OpenUri(link);
+                    RoomStatus? after = null;
+                    var deadline = DateTime.UtcNow.AddSeconds(90);
+                    while (DateTime.UtcNow < deadline)
+                    {
+                        await Task.Delay(1500);
+                        try { after = await Terminal().GetRoomStatus(); } catch { continue; }
+                        if (after.Humans > before.Humans) break;
+                    }
+                    if (after == null || after.Humans <= before.Humans)
+                        throw new Exception($"Link {link} did not pull a client into the server within 90s (humans {before.Humans} -> {after?.Humans}).");
+                    var client = GameProcesses.Find(RootBox.Text.Trim(), false);
+                    if (client == null) throw new Exception("Server accepted a player but no client process is running.");
+                    File.WriteAllText(Path.Combine(dataDir, "invite-smoke.txt"),
+                        $"PASS {link} pulled client PID {client.ProcessId} into the server; humans {before.Humans} -> {after.Humans}; map {after.Map}; port {after.Port}");
+                }
                 if (Environment.GetCommandLineArgs().Contains("--transition-smoke")) await TestRoomTransitions();
                 if (Environment.GetCommandLineArgs().Contains("--official-layout"))
                 {
@@ -188,6 +222,19 @@ public partial class MainWindow : Window
                     window.Close();
                 }
                 if (Environment.GetCommandLineArgs().Contains("--map-management-test")) await TestMapManagement();
+                if (Environment.GetCommandLineArgs().Contains("--tab-layout"))
+                {
+                    for (int index = 0; index < SettingsTabs.Items.Count; index++)
+                    {
+                        SettingsTabs.SelectedIndex = index;
+                        await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+                        UpdateLayout();
+                        var frame = new RenderTargetBitmap((int)ActualWidth, (int)ActualHeight, 96, 96, PixelFormats.Pbgra32);
+                        frame.Render(this); var shot = new PngBitmapEncoder(); shot.Frames.Add(BitmapFrame.Create(frame));
+                        using var file = File.Create(Path.Combine(dataDir, $"tab-{index}.png")); shot.Save(file);
+                    }
+                    File.WriteAllText(Path.Combine(dataDir, "tab-layout.txt"), "PASS rendered " + SettingsTabs.Items.Count + " tabs: " + string.Join(", ", SettingsTabs.Items.Cast<TabItem>().Select(t => t.Header)));
+                }
                 if (Environment.GetCommandLineArgs().Contains("--terminal-smoke"))
                 {
                     var window = Terminal(); window.Show(); await window.VerifyAndCapture(Path.Combine(dataDir, "terminal-smoke.png")); window.Close();
@@ -291,14 +338,14 @@ public partial class MainWindow : Window
             QuotaMode = QuotaBox.SelectedIndex == 1 ? "fill" : "normal", MaxPlayers = Number(PlayersBox, "人数上限"), MaxRounds = Number(RoundsBox, "回合上限"),
             RoundMinutes = Number(TimeBox, "回合时间"), FreezeSeconds = Number(FreezeBox, "冻结时间"), StartMoney = Number(MoneyBox, "初始金钱"),
             AutoBalance = BalanceCheck.IsChecked == true, FriendlyFire = FriendlyCheck.IsChecked == true, Cheats = CheatsCheck.IsChecked == true, ApplyRules = RulesCheck.IsChecked == true,
-            Name = NameBox.Text, Port = Number(PortBox, "端口"), Password = PasswordBox.Password, Token = TokenBox.Password,
+            Name = NameBox.Text, Port = Number(PortBox, "端口"), Token = TokenBox.Password,
             EnableConsole = ConsoleCheck.IsChecked == true };
     }
     void Save()
     {
         prefs.SelectedIdentity = (MapList.SelectedItem as MapEntry)?.Identity ?? prefs.SelectedIdentity;
         prefs.Root = RootBox.Text.Trim(); prefs.Extra = ExtraBox.Text;
-        try { prefs.Settings = Settings() with { Password = "", Token = "", ConsolePassword = "" }; } catch (ArgumentException) { }
+        try { prefs.Settings = Settings() with { Token = "", ConsolePassword = "" }; } catch (ArgumentException) { }
         var file = Path.Combine(dataDir, "preferences.json");
         File.WriteAllText(file + ".tmp", JsonSerializer.Serialize(prefs, new JsonSerializerOptions { WriteIndented = true })); File.Move(file + ".tmp", file, true);
     }
@@ -501,11 +548,10 @@ public partial class MainWindow : Window
         LaunchButton.Content = HostBox.SelectedIndex == 0 ? "启动所选地图  →" : "启动 / 切换服务器地图  →";
         // The console is what makes runtime management (map switching, bots,
         // room verification) possible, and only the launcher-owned dedicated
-        // server can have one. Say so where the choice is made.
-        ConsoleCheck.IsEnabled = HostBox.SelectedIndex != 0;
-        ConsoleCheck.Content = HostBox.SelectedIndex == 0
-            ? "外部终端对私服模式 · 本机模式已不支持（详见终端窗口）"
-            : "外部终端对私服模式（-insecure，必需）";
+        // server can have one. It is mandatory there, so it is not offered as a
+        // toggle that could only produce a broken server.
+        ConsoleCheck.IsChecked = true;
+        ConsoleCheck.IsEnabled = false;
         roomGeneration++; transitionUnverified = false; observedRoom = null; roomNotice = null;
         if (AddressBox != null) { lastRoom = null; AddressBox.Clear(); }
         HostHint.Text = HostBox.SelectedIndex switch
@@ -514,9 +560,6 @@ public partial class MainWindow : Window
             2 => "服务器独立运行；启动地图后，点击下方“本机加入此服务器”进入游戏。好友在“好友联机”页复制加入命令。",
             _ => "只启动一个游戏进程。加载地图后打开“好友联机”，读取实际房间并复制加入指令。此模式无法换图或管理人数：CS2 已移除终端端口，新通道只能读取启动器自己拉起的进程。"
         };
-        // The dedicated modes need the console to wait for Steam login and verify
-        // the loaded map, so it is not really optional there.
-        ConsoleCheck.IsChecked = HostBox.SelectedIndex != 0 || ConsoleCheck.IsChecked == true;
     }
     void ModeChanged(object sender, SelectionChangedEventArgs e) { if (ready && ModeBox.SelectedIndex == 0) RulesCheck.IsChecked = false; }
     MapEntry Selected() => MapList.SelectedItem as MapEntry ?? throw new ArgumentException("请先选择地图。");
@@ -527,7 +570,7 @@ public partial class MainWindow : Window
         {
             var selected = Selected(); var plan = Plan(); var args = plan.Arguments.ToArray();
             var tokenIndex = Array.IndexOf(args, "+sv_setsteamaccount"); if (tokenIndex >= 0) args[tokenIndex + 1] = "<hidden>";
-            var rules = plan.Rules; if (PasswordBox.Password.Length > 0) rules = rules.Replace("sv_password \"" + PasswordBox.Password + "\"", "sv_password \"<hidden>\"");
+            var rules = plan.Rules;
             ShowText("启动配置预览 · " + selected.Title, $"地图：{selected.Title}\n内部名称：{selected.MapName}\n工坊 ID：{selected.Id}\n\n" + string.Join(" ", args) + "\n\n// " + plan.BootName + "\n" + plan.Boot + "\n// " + plan.RulesName + "\n" + rules);
         }
         catch (Exception ex) { Error(ex); }
@@ -550,7 +593,7 @@ public partial class MainWindow : Window
         try
         {
             var s = Settings(); var plan = Plan(); var root = RootBox.Text.Trim(); var expected = Selected();
-            if (s.Kind == HostKind.DedicatedP2P && !RelayPatch.Enabled(root)) throw new ArgumentException("请先在“路径 / P2P”页启用实验 P2P 配置。");
+            if (s.Kind == HostKind.DedicatedP2P && !RelayPatch.Enabled(root)) throw new ArgumentException("请先在“服务器”页启用实验 P2P 配置。");
             var existing = await Task.Run(() => GameProcesses.Find(root, s.Kind != HostKind.Listen));
             if (existing != null && existing.RequestedMaxPlayers != s.MaxPlayers)
                 throw new InvalidOperationException($"人数启动参数已改为 {s.MaxPlayers}，当前进程仍为 {existing.RequestedMaxPlayers?.ToString() ?? "未知"}。换图不会更新启动参数。本机模式请使用游戏终端的“启用终端并重新启动”入口；独立服务器请正常停服后再启动。参数也不保证突破地图／模式限制，开服后仍需核对人数。");
@@ -579,7 +622,7 @@ public partial class MainWindow : Window
                     return;
                 }
                 if (System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties().GetActiveUdpListeners().Any(p => p.Port == s.Port))
-                    throw new InvalidOperationException($"游戏 UDP 端口 {s.Port} 已被占用，未启动第二个服务器。请在高级设置中选择空闲游戏端口，或结束旧房间后再开服；这不是终端端口。");
+                    throw new InvalidOperationException($"游戏 UDP 端口 {s.Port} 已被占用，未启动第二个服务器。请在“好友联机”页修改游戏 UDP 端口，或结束旧房间后再开服；这不是终端端口。");
                 if (!s.EnableConsole) throw new InvalidOperationException("独立服务器需要启用私服终端模式，以使用隔离运行目录。");
                 var serverExe = await Task.Run(() => DedicatedRuntime.Prepare(root));
                 // The launcher must own the process: commands go out on a named
@@ -616,8 +659,8 @@ public partial class MainWindow : Window
                                 && Hosting.ParseServerIdentity("steamid : " + actual.Identity) != null)
                             {
                                 Save(); DisplayRoom(actual);
-                                RunText.Text = "独立服务器已就绪：" + expected.Title + "。点击“本机加入此服务器”进入。";
-                                Status("已核实实际地图和工坊 ID。客户端需通过连接命令加入此独立服务器。");
+                                RunText.Text = "独立服务器已就绪：" + expected.Title + "。点“本机加入此服务器”直接进入，或复制邀请链接发给好友。";
+                                Status("已核实实际地图和工坊 ID。本机可直接点“本机加入此服务器”，好友用邀请链接进入。");
                                 return;
                             }
                             lastError = requested ? "当前地图仍为 " + actual.Map : "等待 Steam 服务器身份";
@@ -701,8 +744,11 @@ public partial class MainWindow : Window
         {
             var command = await FreshJoin(false);
             if (AddressBox.Text.Trim() == "127.0.0.1") throw new ArgumentException("127.0.0.1 不能分享给好友，请先读取房间或选择组网地址。");
-            Clipboard.SetText("在 CS2 设置中开启开发者控制台，按 ~ 粘贴：\n" + command + "\n若使用组网 IP，请先加入房主同一个 EasyTier / Radmin VPN / ZeroTier 网络。\n加入失败时请保留游戏控制台报错给房主。");
-            Status("好友加入说明已复制（含填写的房间密码），请发给好友。");
+            var link = await FreshLink();
+            Clipboard.SetText("点这个链接直接进服，不用装启动器，也不用开控制台：\n" + link +
+                "\n\n如果链接没反应，再在 CS2 控制台（~）粘贴：\n" + command +
+                "\n\n若使用组网 IP，请先加入房主同一个 EasyTier / Radmin VPN / ZeroTier 网络。\n加入失败时请保留游戏控制台报错给房主。");
+            Status("好友加入说明已复制，请发给好友。");
         }
         catch (Exception ex) { Error(ex); }
     }
