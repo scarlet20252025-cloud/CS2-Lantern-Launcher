@@ -46,7 +46,7 @@ public partial class TerminalWindow : Window
             return;
         }
         CapacityText.Text = $"人数上限：{cap} 人（当前进程的启动参数）";
-        CapacityHint.Text = "改主界面的输入框或换图都不会改变已启动的进程；要生效必须重启服务器。下面可以直接改并重启。";
+        CapacityHint.Text = "这是服务器进程的启动参数：改主界面输入框或换图都不会影响已启动的进程，只能在这里改数字并重启。";
         CapRow.Visibility = Visibility.Visible; RaiseCapButton.Visibility = Visibility.Visible;
         if (CapInput.Text.Length == 0) CapInput.Text = cap.ToString();
     }
@@ -55,8 +55,8 @@ public partial class TerminalWindow : Window
         if (RaiseCapacityRequested == null) return;
         if (!int.TryParse(CapInput.Text, out var cap) || cap is < 2 or > 64)
         { CapacityText.Text = "人数上限需要填 2–64 的整数。"; return; }
-        if (requestedCapacity.HasValue && cap < requestedCapacity.Value)
-        { CapacityText.Text = $"新上限 {cap} 低于当前 {requestedCapacity}。这里只用于提高上限；要降低请正常停服后改主界面再开服。"; return; }
+        if (requestedCapacity.HasValue && cap == requestedCapacity.Value)
+        { CapacityText.Text = $"当前进程已经是 {cap} 人，不需要重启。改数字后再点一次。"; return; }
         RaiseCapButton.IsEnabled = false;
         try { await RaiseCapacityRequested(cap); }
         catch (Exception ex) { CapacityText.Text = "未完成 · " + ex.Message; }
@@ -75,6 +75,7 @@ public partial class TerminalWindow : Window
     public bool IsConnected => connection?.IsReady == true;
     public async Task<RoomStatus> GetRoomStatus() { await ConnectGame(); return await connection!.ReadStatus(); }
     public async Task<int> GetActiveHumans() { await ConnectGame(); return await connection!.ReadActiveHumans(); }
+    public async Task<List<PlayerRow>> GetPlayers() { await ConnectGame(); return await connection!.ReadPlayers(); }
     public async Task<int?> GetSpawnCount() { await ConnectGame(); return await connection!.ReadSpawnCount(); }
     public TerminalWindow(string gameRoot, bool dedicated)
     {

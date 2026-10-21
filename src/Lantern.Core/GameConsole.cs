@@ -5,16 +5,67 @@ namespace Lantern.Core;
 
 public sealed record RoomStatus(string Map, int Humans, int Bots, string Identity, int Port, string Addon);
 
+/// <summary>One row of the <c>status</c> player table.</summary>
+/// <param name="Id">Engine slot. <c>65535</c> is an empty slot, not a player.</param>
+/// <param name="Name">Quoted name without quotes; empty for an empty slot.</param>
+/// <param name="State"><c>active</c>, <c>spawning</c>, <c>challenging</c>, …</param>
+public sealed record PlayerRow(int Id, string Name, string State, bool IsBot)
+{
+    public bool IsEmptySlot => Id == 65535;
+    public bool IsReady => !IsEmptySlot && !IsBot && State == "active";
+}
+
 public static class RoomStatusParser
 {
-    public static int ActiveHumans(string text)
+    /// <summary>
+    /// Reads the <c>status</c> player table into rows.
+    ///
+    /// Field positions, measured on 1.41.9.1 (2026-10-15 build):
+    /// <code>
+    ///    id     time ping loss      state   rate adr name
+    ///     0    02:02    0    0     active 786432 127.0.0.1:50333 'Mikuo'   ← human
+    ///   769      BOT    0    0     active      0 'Comb'                     ← bot: no time/adr
+    /// 65535 [NoChan]    0    0 challenging      0unknown ''                 ← empty slot
+    /// </code>
+    /// The state column is index 4 in every shape, so it is matched by position
+    /// rather than by looking for a SteamID: the adr column used to be
+    /// <c>[U:1:x]:port</c> and is now a plain <c>ip:port</c>, which is exactly
+    /// what made a SteamID-shaped regex silently report "0 ready" for a player
+    /// who was already in the map.
+    /// </summary>
+    public static List<PlayerRow> Players(string text)
     {
-        if (!text.Contains("---------players--------") || !text.Contains("#end"))
-            throw new InvalidOperationException("未读取到完整玩家状态，请稍后再换图。");
-        return System.Text.RegularExpressions.Regex.Matches(text,
-            @"^\s*\d+\s+\S+\s+\S+\s+\S+\s+active\s+\S+\s+\[U:\d+:\d+\](?::\d+)?\s",
-            System.Text.RegularExpressions.RegexOptions.Multiline).Count;
+        var start = text.IndexOf("---------players--------", StringComparison.Ordinal);
+        var end = text.IndexOf("#end", start < 0 ? 0 : start, StringComparison.Ordinal);
+        if (start < 0 || end < 0) throw new InvalidOperationException("未读取到完整玩家状态，请稍后再换图。");
+        var rows = new List<PlayerRow>();
+        foreach (var raw in text[(start + "---------players--------".Length)..end].Split('\n'))
+        {
+            var line = raw.Trim();
+            if (line.Length == 0) continue;
+            // The name is the last quoted field and may itself contain spaces and
+            // even the word BOT, so it is cut off before the columns are counted.
+            var quoted = line.LastIndexOf('\'');
+            var opened = quoted > 0 ? line.LastIndexOf('\'', quoted - 1) : -1;
+            var name = opened >= 0 && quoted > opened ? line[(opened + 1)..quoted] : "";
+            var fields = (opened > 0 ? line[..opened] : line).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            // Header row: "id time ping loss state rate adr name".
+            if (fields.Length > 0 && fields[0] == "id") continue;
+            if (fields.Length < 5 || !int.TryParse(fields[0], out var id)) continue;
+            // A bot's time column reads "BOT" instead of a clock. Older builds put
+            // it in the adr column instead, so any bare field counts.
+            var isBot = fields.Contains("BOT");
+            rows.Add(new PlayerRow(id, name, fields[4], isBot));
+        }
+        return rows;
     }
+
+    public static int ActiveHumans(string text) => Players(text).Count(p => p.IsReady);
+
+    /// <summary>Humans that are connected but not yet fully in the map.</summary>
+    public static List<string> LoadingHumans(string text)
+        => Players(text).Where(p => !p.IsEmptySlot && !p.IsBot && p.State != "active")
+            .Select(p => p.Name.Length == 0 ? "(未命名)" : p.Name).ToList();
     public static RoomStatus Parse(string text)
     {
         // The engine can append asynchronous output between the closing JSON
@@ -163,6 +214,13 @@ public sealed class GameConsole : IDisposable
     }
     public async Task<int> ReadActiveHumans()
         => RoomStatusParser.ActiveHumans(await ReadStatusText());
+
+    /// <summary>
+    /// The player table, for callers that must know *who* is still loading
+    /// rather than only how many are ready.
+    /// </summary>
+    public async Task<List<PlayerRow>> ReadPlayers()
+        => RoomStatusParser.Players(await ReadStatusText());
 
     public async Task<int?> ReadSpawnCount()
     {

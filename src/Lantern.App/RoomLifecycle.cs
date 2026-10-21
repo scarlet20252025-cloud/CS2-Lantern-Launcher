@@ -46,6 +46,7 @@ public partial class MainWindow
 
     async Task MonitorRoom()
     {
+        UpdateCapacityState();
         if (launching || readingRoom || transitionUnverified || terminal == null) return;
         if (!terminal.IsConnected)
         {
@@ -175,9 +176,17 @@ public partial class MainWindow
         catch (InvalidOperationException) { /* Menu / inactive server: initial map load is required. */ }
         if (settings.Kind != HostKind.Listen && before?.Humans > 0)
         {
-            int active = await target.GetActiveHumans();
+            var players = await target.GetPlayers();
+            int active = players.Count(p => p.IsReady);
             if (active != before.Humans)
-                throw new InvalidOperationException($"玩家仍在连接或加载（已就绪 {active}/{before.Humans}），未发送换图命令。请等玩家进入地图后再换图，避免客户端重连地址丢失。");
+            {
+                var loading = players.Where(p => !p.IsEmptySlot && !p.IsBot && p.State != "active")
+                    .Select(p => (p.Name.Length == 0 ? "(未命名)" : p.Name) + " / " + p.State).ToList();
+                throw new InvalidOperationException(
+                    $"还有 {before.Humans - active} 名真人没有真正进入地图（已就绪 {active}/{before.Humans}）" +
+                    (loading.Count > 0 ? "：" + string.Join("、", loading) : "") +
+                    "。未发送换图命令，以免他们重连时丢掉地址。等他们进入地图后重试即可；若他们卡在加载界面，请让他们断开重进。");
+            }
         }
         var session = "switch_" + DateTime.UtcNow.ToString("yyyyMMdd_HHmmss_fff");
         var plan = before == null ? Hosting.Build(expected, settings, session)

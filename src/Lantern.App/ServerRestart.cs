@@ -61,6 +61,62 @@ public partial class MainWindow
         }
         throw new InvalidOperationException("恢复服务器未在 45 秒内就绪，已停止自动尝试。诊断：" + logPath);
     }
+    // A capacity that only exists as a number in a text box is not an entry point:
+    // the operator needs to see what the running process actually got, and change
+    // it from the same place. Both the main window and the terminal use this.
+    // WMI costs tens of milliseconds, and this runs on every keystroke as well as
+    // on the 4 s room poll. Reuse a lookup for a moment instead of re-querying.
+    (DateTime At, string Root, int? Cap) capacityCache;
+    void UpdateCapacityState()
+    {
+        if (CapacityState == null || RaiseCapacityButton == null || RootBox == null || HostBox == null || PlayersBox == null) return;
+        try
+        {
+            var root = RootBox.Text.Trim();
+            var typed = int.TryParse(PlayersBox.Text, out var t) && t is >= 2 and <= 64 ? t : (int?)null;
+            if (HostBox.SelectedIndex == 0 || root.Length == 0)
+            {
+                CapacityState.Text = "本机模式没有独立服务器进程；人数上限由游戏内房间决定，这里只影响独立服务器。";
+                RaiseCapacityButton.IsEnabled = false;
+                return;
+            }
+            if ((DateTime.UtcNow - capacityCache.At).TotalSeconds > 2 || capacityCache.Root != root)
+            {
+                var found = GameProcesses.Find(root, true);
+                capacityCache = (DateTime.UtcNow, root, found?.RequestedMaxPlayers);
+            }
+            if (capacityCache.Cap is not int cap)
+            {
+                CapacityState.Text = "服务器未运行。这里的数字会成为下次启动的 -maxplayers；启动后再回来核对。";
+                RaiseCapacityButton.IsEnabled = false;
+                return;
+            }
+            if (typed == null)
+            {
+                CapacityState.Text = $"当前服务器进程：{cap} 人。人数上限需要填 2–64 的整数。";
+                RaiseCapacityButton.IsEnabled = false;
+                return;
+            }
+            bool differs = typed != cap;
+            CapacityState.Text = differs
+                ? $"当前进程仍是 {cap} 人；点右侧按钮按 {typed} 人重启后才会生效。"
+                : $"当前进程：{cap} 人，输入框一致。只有改数字并重启才能改变它。";
+            RaiseCapacityButton.IsEnabled = differs;
+        }
+        catch { CapacityState.Text = "读取服务器进程上限失败；请确认服务器仍在运行。"; RaiseCapacityButton.IsEnabled = false; }
+    }
+
+    void CapacityTextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e) => UpdateCapacityState();
+
+    async void RaiseCapacityClick(object sender, RoutedEventArgs e)
+    {
+        if (!int.TryParse(PlayersBox.Text, out var cap) || cap is < 2 or > 64)
+        { Status("人数上限需要填 2–64 的整数。"); return; }
+        try { await RaiseCapacity(cap); }
+        catch (Exception ex) { Error(ex); }
+        finally { capacityCache = default; UpdateCapacityState(); }
+    }
+
     // The terminal can raise the ceiling without making the operator hunt for the
     // spinbox on another window; the number is still only a launch argument, so it
     // cannot take effect without a restart.
@@ -74,6 +130,7 @@ public partial class MainWindow
         PlayersBox.Text = cap.ToString();
         Save();
         await RestartDedicatedServer();
+        capacityCache = default;
         if (terminal != null && !terminal.IsClosed) terminal.UpdateCapacity(cap);
     }
     async void RestartServerClick(object sender, RoutedEventArgs e)

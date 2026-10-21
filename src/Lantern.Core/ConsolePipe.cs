@@ -46,6 +46,10 @@ public sealed class ConsolePipe : IDisposable
     /// <summary>Raised for every stdout line worth showing; noise is filtered here.</summary>
     public event Action<string>? Line;
 
+    /// <summary>How many engine lines were dropped as noise. Shown, never silent.</summary>
+    public long Filtered => Interlocked.Read(ref filtered);
+    long filtered;
+
     public ConsolePipe(string session)
     {
         if (!System.Text.RegularExpressions.Regex.IsMatch(session, @"^[a-z0-9_]{1,40}$"))
@@ -103,7 +107,8 @@ public sealed class ConsolePipe : IDisposable
                     if (c == '\r') continue;
                     if (c != '\n') { line.Append(c); if (line.Length < 65536) continue; }
                     var text = line.ToString(); line.Clear();
-                    if (!Noise(text)) Line?.Invoke(text + "\n");
+                    if (Noise(text)) { Interlocked.Increment(ref filtered); continue; }
+                    Line?.Invoke(text + "\n");
                 }
             }
         }
@@ -111,13 +116,36 @@ public sealed class ConsolePipe : IDisposable
     }
 
     /// <summary>
-    /// The engine's text console polls its own stdin and logs a line per poll.
-    /// Measured 1000+ such lines per session; they must never reach the UI or the
-    /// marker matcher.
+    /// Engine chatter that would otherwise bury the operator's own commands.
+    ///
+    /// Measured on 1.41.9.1: a dedicated server prints one
+    /// <c>1534.937500 Long frame (WarmupPeriod): 29.98ms elapsed, …</c> line
+    /// several times per second whenever the map is not idle, and the text
+    /// console logs one <c>CTextConsoleWin::GetLine</c> line per stdin poll.
+    /// Both are engine health noise with no bearing on a command's result.
     /// </summary>
     static bool Noise(string line)
         => line.Contains("CTextConsoleWin::GetLine", StringComparison.Ordinal)
-        || line.Contains("UNEXPECTED LONG FRAME DETECTED", StringComparison.Ordinal);
+        || line.Contains("UNEXPECTED LONG FRAME DETECTED", StringComparison.Ordinal)
+        || IsLongFrame(line);
+
+    /// <summary>Exposed so a test can assert the filter without a live server.</summary>
+    public static bool IsNoise(string line) => Noise(line);
+
+    /// <summary>
+    /// <c>&lt;uptime&gt; Long frame (&lt;phase&gt;): …</c> — matched by shape so a
+    /// future phase name cannot bring the spam back.
+    /// </summary>
+    static bool IsLongFrame(string line)
+    {
+        var trimmed = line.AsSpan().TrimStart();
+        // Skip the uptime number.
+        var i = 0;
+        while (i < trimmed.Length && (char.IsDigit(trimmed[i]) || trimmed[i] == '.')) i++;
+        if (i == 0) return false;
+        var rest = trimmed[i..].TrimStart();
+        return rest.StartsWith("Long frame (", StringComparison.Ordinal);
+    }
 
     /// <summary>Sends one command line. Queued by the engine; returns on write.</summary>
     public async Task Send(string text, CancellationToken token)

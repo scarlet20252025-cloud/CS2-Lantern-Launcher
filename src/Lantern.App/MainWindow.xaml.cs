@@ -195,12 +195,43 @@ public partial class MainWindow : Window
                     var beforeCap = (await Task.Run(() => GameProcesses.Find(capRoot, true)))!.RequestedMaxPlayers;
                     int target = beforeCap!.Value + 2;
                     var beforePid = GameProcesses.Find(capRoot, true)!.ProcessId;
+                    // The entry point must describe reality before it is used, not
+                    // just work when clicked: a stale or identical number disables it.
+                    PlayersBox.Text = beforeCap.Value.ToString(); capacityCache = default; UpdateCapacityState();
+                    if (RaiseCapacityButton.IsEnabled) throw new Exception("Capacity button stayed enabled while the typed value already matched the process.");
+                    PlayersBox.Text = target.ToString(); capacityCache = default; UpdateCapacityState();
+                    if (!RaiseCapacityButton.IsEnabled) throw new Exception("Capacity button did not enable after the typed value changed.");
+                    if (!CapacityState.Text.Contains(target.ToString())) throw new Exception("Capacity state did not name the pending value: " + CapacityState.Text);
                     await RaiseCapacity(target);
+                    capacityCache = default; UpdateCapacityState();
+                    if (RaiseCapacityButton.IsEnabled) throw new Exception("Capacity button still enabled after the restart applied the value.");
                     var afterCap = (await Task.Run(() => GameProcesses.Find(capRoot, true)))!;
                     if (afterCap.ProcessId == beforePid) throw new Exception("Capacity change did not restart the server.");
                     if (afterCap.RequestedMaxPlayers != target) throw new Exception($"New process still runs -maxplayers {afterCap.RequestedMaxPlayers}, expected {target}.");
                     File.WriteAllText(Path.Combine(dataDir, "capacity-smoke.txt"),
-                        $"PASS ceiling {beforeCap} -> {target} reached the new process; dedicated PID {beforePid} -> {afterCap.ProcessId}");
+                        $"PASS ceiling {beforeCap} -> {target} reached the new process; dedicated PID {beforePid} -> {afterCap.ProcessId}; entry point disabled while values matched and enabled while they differed");
+                }
+                if (Environment.GetCommandLineArgs().Contains("--guard-smoke"))
+                {
+                    // Read-only: the map-change guard used to report "0 ready" for a
+                    // player who was already in the map, because the adr column no
+                    // longer carries a SteamID. Compare it against the server's own
+                    // client count on whatever is running right now.
+                    if (HostBox.SelectedIndex == 0) HostBox.SelectedIndex = 2;
+                    var guardRoot = RootBox.Text.Trim();
+                    if (await Task.Run(() => GameProcesses.Find(guardRoot, true)) == null)
+                        throw new Exception("No dedicated server is running; this check refuses to start one.");
+                    var guardTool = Terminal(); guardTool.Show(); await guardTool.ConnectGame();
+                    var room = await guardTool.GetRoomStatus();
+                    var players = await guardTool.GetPlayers();
+                    int ready = players.Count(p => p.IsReady);
+                    if (room.Humans > 0 && ready != room.Humans)
+                        throw new Exception($"Guard disagrees with the server: {ready} ready but clients_human is {room.Humans}. Rows: " +
+                            string.Join(" | ", players.Select(p => $"{p.Id}:{p.Name}:{p.State}:bot={p.IsBot}")));
+                    File.WriteAllText(Path.Combine(dataDir, "guard-smoke.txt"),
+                        $"PASS live server {room.Map}: clients_human {room.Humans} == ready humans {ready}; bots {room.Bots}; rows " +
+                        string.Join(" | ", players.Select(p => $"{p.Id}:{p.State}:bot={p.IsBot}")));
+                    guardTool.Close();
                 }
                 if (Environment.GetCommandLineArgs().Contains("--transition-smoke")) await TestRoomTransitions();
                 if (Environment.GetCommandLineArgs().Contains("--official-layout"))
@@ -581,6 +612,7 @@ public partial class MainWindow : Window
         // toggle that could only produce a broken server.
         ConsoleCheck.IsChecked = true;
         ConsoleCheck.IsEnabled = false;
+        UpdateCapacityState();
         roomGeneration++; transitionUnverified = false; observedRoom = null; roomNotice = null;
         if (AddressBox != null) { lastRoom = null; AddressBox.Clear(); }
         HostHint.Text = HostBox.SelectedIndex switch

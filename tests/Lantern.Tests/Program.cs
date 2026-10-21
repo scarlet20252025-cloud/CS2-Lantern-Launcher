@@ -198,8 +198,38 @@ try
     var roomFixture = RoomStatusParser.Parse("{\"server\":{\"map\":\"crazy_chickens\",\"addon\":\"3815559839\",\"clients_human\":0,\"clients_bot\":0,\"udp_port\":27016}}");
     var noisyRoom = RoomStatusParser.Parse("{\"server\":{\"map\":\"de_dust2\",\"clients_human\":1,\"clients_bot\":0}}\n[#123 P2P SDR] connected\n");
     Check(noisyRoom.Map == "de_dust2" && noisyRoom.Humans == 1, "asynchronous network log after status JSON does not break room parsing");
-    Check(RoomStatusParser.ActiveHumans("---------players--------\n65280 00:14 0 0 active 786432 [U:1:123]:0 'Player'\n65281 00:00 0 0 spawning 786432 [U:1:456]:0 'Loading'\n2 00:10 0 0 active 0 BOT 'Bot'\n#end") == 1, "only fully active humans count toward safe dedicated map change");
+    // Measured on 1.41.9.1 (2026-10-15 build): the adr column is a plain ip:port,
+    // no longer [U:1:x]:port. A SteamID-shaped regex reported "0 ready" for a
+    // player who was already in the map, which blocked every map change.
+    Check(RoomStatusParser.ActiveHumans("---------players--------\n  id     time ping loss      state   rate adr name\n   0    02:02    0    0     active 786432 127.0.0.1:50333 'Mikuo'\n 769      BOT    0    0     active      0 'Comb'\n65535 [NoChan]    0    0 challenging      0unknown ''\n#end") == 1, "an ip:port human counts as ready; bots and empty slots do not");
+    Check(RoomStatusParser.ActiveHumans("---------players--------\n65280 00:14 0 0 active 786432 [U:1:123]:0 'Player'\n65281 00:00 0 0 spawning 786432 [U:1:456]:0 'Loading'\n2 00:10 0 0 active 0 BOT 'Bot'\n#end") == 1, "the older SteamID adr column still parses");
+    var loadingRows = RoomStatusParser.Players("---------players--------\n65281 00:00 0 0 spawning 786432 [U:1:456]:0 'Loading'\n   0    02:02    0    0     active 786432 127.0.0.1:50333 'Mikuo'\n#end");
+    Check(loadingRows.Count == 2 && loadingRows.Count(p => p.IsReady) == 1
+        && RoomStatusParser.LoadingHumans("---------players--------\n65281 00:00 0 0 spawning 786432 [U:1:456]:0 'Loading'\n#end").SequenceEqual(new[] { "Loading" }),
+        "a connected player who is still spawning is named, not just counted");
+    Check(RoomStatusParser.Players("---------players--------\n65535 [NoChan]    0    0 challenging      0unknown ''\n#end")
+        .All(p => p.IsEmptySlot && !p.IsReady), "an empty slot is never a ready human");
+    // The exact block captured from a live 1.41.9.1 server while the operator was
+    // already standing in the map, plus the clients_human the same status_json
+    // reported. The old SteamID regex made this comparison fail, which blocked
+    // every map change with "已就绪 0/1" for a player who was already in.
+    const string liveBlock = "---------players--------\n  id     time ping loss      state   rate adr name\n   0    02:02    0    0     active 786432 127.0.0.1:50333 'Mikuo'\n 769      BOT    0    0     active      0 'Comb'\n 770      BOT    0    0     active      0 'Hobart'\n65535 [NoChan]    0    0 challenging      0unknown ''\n#end";
+    int liveHumans = 1, liveReady = RoomStatusParser.ActiveHumans(liveBlock);
+    Check(liveReady == liveHumans, $"the map-change guard must agree with clients_human ({liveReady} ready vs {liveHumans} humans)");
+    Check(RoomStatusParser.LoadingHumans(liveBlock).Count == 0, "a fully loaded operator is not listed as still loading");
+    // The name is a quoted field, so the word BOT inside it cannot make a human a bot.
+    Check(RoomStatusParser.ActiveHumans("---------players--------\n   1    01:00    0    0     active 786432 127.0.0.1:50333 'BOT Bob'\n#end") == 1,
+        "a human whose name contains BOT is still a human");
     Reject(() => RoomStatusParser.ActiveHumans("status unavailable"), "incomplete player list cannot authorize dedicated map change");
+    // The real spam line, copied from a live server's stdout on 1.41.9.1.
+    Check(ConsolePipe.IsNoise("1534.937500 Long frame (WarmupPeriod): 29.98ms elapsed, 0.57ms sim time, 1 ticks, 98236..98236.")
+        && ConsolePipe.IsNoise("1534.984375 Long frame (FreezePeriod): 30.45ms elapsed, 1.00ms sim time, 1 ticks, 98239..98239.")
+        && ConsolePipe.IsNoise("CTextConsoleWin::GetLine: !GetNumberOfConsoleInputEvents"),
+        "the per-frame and per-poll engine chatter is filtered");
+    Check(!ConsolePipe.IsNoise("\"Comb<769><BOT>\" switched from team <Unassigned> to <CT>")
+        && !ConsolePipe.IsNoise("Server:  Running [26.224.13.134:27016]")
+        && !ConsolePipe.IsNoise("   0    02:02    0    0     active 786432 127.0.0.1:50333 'Mikuo'"),
+        "real command output and player rows survive the noise filter");
     Check(roomFixture.Map == "crazy_chickens" && roomFixture.Port == 27016 && roomFixture.Identity == "", "active room works without Steam identity");
     Check(QuickCommands.TeamFill(4, 4).T == 0 && QuickCommands.TeamFill(4, 4).Ct == 0, "equal teams need no bots");
     Reject(() => QuickCommands.TeamFill(0, 0), "empty server fill rejected");
