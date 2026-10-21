@@ -26,25 +26,25 @@ static class WebPage
        font:14px/1.5 "Microsoft YaHei UI","PingFang SC","Hiragino Sans GB",system-ui,sans-serif;
        -webkit-text-size-adjust:100%}
   a{color:var(--accent)}
-  .wrap{max-width:1080px;margin:0 auto;padding:18px 16px 60px}
-  header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
-  .logo{font-weight:700;letter-spacing:.28em;font-size:19px}
-  .sub{color:var(--muted);font-size:12px}
+  .wrap{max-width:1180px;margin:0 auto;padding:14px 16px 48px}
+  header{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:11px}
+  .logo{font-weight:700;letter-spacing:.28em;font-size:17px}
+  .sub{color:var(--muted);font-size:11.5px}
   .pill{margin-left:auto;display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted)}
   .dot{width:8px;height:8px;border-radius:50%;background:var(--dim);display:inline-block}
   .dot.on{background:var(--green);box-shadow:0 0 8px #92BA9A88}
   .dot.busy{background:var(--amber)}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
-  h2{font-size:15px;margin:0 0 12px;font-weight:600;display:flex;align-items:center;gap:8px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:13px;margin-bottom:10px}
+  h2{font-size:14px;margin:0 0 9px;font-weight:600;display:flex;align-items:center;gap:8px}
   h2 .hint{font-weight:400;font-size:11.5px;color:var(--dim);margin-left:auto}
-  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
-  .stat{background:var(--card2);border-radius:9px;padding:11px 13px}
-  .stat b{display:block;font-size:20px;font-weight:600;font-variant-numeric:tabular-nums}
-  .stat span{color:var(--muted);font-size:11.5px}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:8px}
+  .stat{background:var(--card2);border-radius:8px;padding:8px 11px}
+  .stat b{display:block;font-size:17px;line-height:1.35;font-weight:600;font-variant-numeric:tabular-nums}
+  .stat span{color:var(--muted);font-size:11px}
   .mapname{font-family:Consolas,ui-monospace,monospace;color:var(--accent);word-break:break-all}
   table{width:100%;border-collapse:collapse;font-size:13px}
-  th{text-align:left;color:var(--dim);font-weight:500;font-size:11.5px;padding:4px 8px;border-bottom:1px solid var(--line)}
-  td{padding:7px 8px;border-bottom:1px solid #202d40;font-variant-numeric:tabular-nums}
+  th{text-align:left;color:var(--dim);font-weight:500;font-size:11px;padding:3px 8px;border-bottom:1px solid var(--line)}
+  td{padding:5px 8px;border-bottom:1px solid #202d40;font-variant-numeric:tabular-nums}
   tr:last-child td{border-bottom:none}
   .tag{font-size:10.5px;padding:1px 6px;border-radius:5px;border:1px solid var(--line);color:var(--muted)}
   .tag.bot{color:#9DC3E6;border-color:#2f4a63}
@@ -52,43 +52,44 @@ static class WebPage
   .tag.wait{color:var(--amber);border-color:#5a4527}
   .empty{color:var(--dim);font-size:12.5px;padding:8px 0}
   button{font:inherit;cursor:pointer;border-radius:8px;border:1px solid var(--line);
-         background:#253246;color:var(--text);padding:9px 14px;transition:.12s}
+         background:#253246;color:var(--text);padding:7px 12px;transition:.12s}
   button:hover:not(:disabled){border-color:var(--amber)}
   button:disabled{opacity:.45;cursor:not-allowed}
   button.primary{background:var(--amber);color:#141C25;font-weight:600;border-color:transparent}
   button.warn{background:#3a2b22;color:#FFD09A;border-color:#5a4527}
   button.ghost{background:transparent}
-  .maps{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;max-height:340px;overflow:auto;padding-right:4px}
-  .map{display:flex;flex-direction:column;gap:8px;background:var(--card2);border:1px solid var(--line);
-       border-radius:9px;padding:0 0 12px;text-align:left;min-height:118px;overflow:hidden}
+  .maps{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:7px;max-height:288px;overflow:auto;padding-right:4px}
+  .map{display:flex;flex-direction:row;align-items:center;gap:10px;background:var(--card2);
+     border:1px solid var(--line);border-radius:9px;padding:8px 10px;text-align:left;overflow:hidden}
   .map.cur{border-color:var(--amber);background:#302B26}
-  .map .cover{height:104px;background:#253346;display:flex;align-items:center;justify-content:center;
-              color:#7A8CA4;font:11px Consolas,monospace;letter-spacing:.1em;overflow:hidden}
+  .map .cover{width:62px;height:62px;flex:0 0 auto;border-radius:6px;background:#253346;
+            display:flex;align-items:center;justify-content:center;color:#7A8CA4;
+            font:8px Consolas,monospace;letter-spacing:.04em;text-align:center;overflow:hidden}
   .map .cover img{width:100%;height:100%;object-fit:cover;display:block}
-  .map .body{display:flex;flex-direction:column;gap:8px;padding:10px 13px 0;flex:1;min-width:0}
-  .map .t{font-weight:600;font-size:13px;line-height:1.4;min-height:36px;
-          display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-  .map .m{font-family:Consolas,monospace;font-size:11.5px;color:var(--accent);overflow-wrap:anywhere}
-  .map .b{margin:0 13px;padding:7px 10px;font-size:12.5px}
-  .hero{display:flex;gap:14px;align-items:stretch;margin-bottom:14px}
+  .map .body{display:flex;flex-direction:column;gap:3px;padding:0;flex:1;min-width:0}
+  .map .t{font-weight:600;font-size:12.5px;line-height:1.3;
+        display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .map .m{font-family:Consolas,monospace;font-size:11px;color:var(--accent);overflow-wrap:anywhere}
+  .map .b{margin:0;padding:6px 11px;font-size:12px;flex:0 0 auto}
+  .hero{display:flex;gap:12px;align-items:stretch;margin-bottom:9px}
   .hero[hidden]{display:none}
   #mapsEmpty[hidden],#playersEmpty[hidden],#gate[hidden],#app[hidden]{display:none}
-  .hero .shot{width:172px;flex:0 0 auto;height:97px;border-radius:8px;overflow:hidden;background:#253246;
+  .hero .shot{width:126px;flex:0 0 auto;height:71px;border-radius:8px;overflow:hidden;background:#253246;
               display:flex;align-items:center;justify-content:center;color:#7A8CA4;font:11px Consolas,monospace}
   .hero .shot img{width:100%;height:100%;object-fit:cover;display:block}
   .hero .meta{display:flex;flex-direction:column;justify-content:center;gap:4px;min-width:0}
-  .hero .meta b{font-size:17px;font-weight:600}
+  .hero .meta b{font-size:15.5px;font-weight:600}
   .hero .meta span{color:var(--muted);font-size:12px;overflow-wrap:anywhere}
   @media (max-width:560px){ .hero{flex-direction:column} .hero .shot{width:100%;height:150px} }
-  #log{background:#0A121D;border:1px solid var(--line);border-radius:9px;height:300px;overflow:auto;
-       padding:10px 12px;font:12px/1.55 Consolas,ui-monospace,monospace;white-space:pre-wrap;word-break:break-word;color:#C6D3E4}
+  #log{background:#0A121D;border:1px solid var(--line);border-radius:9px;height:240px;overflow:auto;
+       padding:9px 11px;font:11.5px/1.55 Consolas,ui-monospace,monospace;white-space:pre-wrap;word-break:break-word;color:#C6D3E4}
   #log .sys{color:var(--amber)}
   #log .err{color:var(--red)}
   #log .echo{color:#8FA6BF}
   .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
   .row input{flex:1 1 240px;min-width:0}
   input{font:inherit;background:#0F1A28;border:1px solid var(--line);border-radius:8px;
-        color:var(--text);padding:10px 12px;width:100%}
+        color:var(--text);padding:8px 11px;width:100%}
   input:focus{outline:none;border-color:var(--amber)}
   .num{width:74px;flex:0 0 auto;text-align:center}
   .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#22303f;
@@ -99,16 +100,18 @@ static class WebPage
   #gate{max-width:420px;margin:12vh auto 0}
   #gate h1{font-size:18px;margin:0 0 6px}
   #gate p{color:var(--muted);font-size:12.5px;margin:0 0 16px}
-  .foot{color:var(--dim);font-size:11.5px;margin-top:18px;line-height:1.7}
-  .join{background:#12251c;border:1px solid #2d5340;border-radius:10px;padding:13px 15px;margin-bottom:12px}
-  .join .cmd{font:13px/1.6 Consolas,ui-monospace,monospace;color:#C8ECD6;background:#0A121D;
-             border:1px solid #26402f;border-radius:8px;padding:11px 13px;overflow-wrap:anywhere;
+  .foot{color:var(--dim);font-size:11px;margin-top:12px;line-height:1.65}
+  .join{background:#12251c;border:1px solid #2d5340;border-radius:10px;padding:10px 12px}
+  .join .cmd{font:12.5px/1.5 Consolas,ui-monospace,monospace;color:#C8ECD6;background:#0A121D;
+             border:1px solid #26402f;border-radius:8px;padding:9px 11px;overflow-wrap:anywhere;
              user-select:all;-webkit-user-select:all}
-  .join .steps{color:#9FC0AC;font-size:12px;margin-top:9px;line-height:1.75}
+  .join .steps{color:#9FC0AC;font-size:11.5px;margin-top:7px;line-height:1.6}
   .join .steps b{color:var(--accent)}
-  .join .row{margin-top:10px}
+  .join .cmdrow{display:flex;gap:8px;align-items:stretch}
+  .join .cmdrow .cmd{flex:1;min-width:0;display:flex;align-items:center}
+  .join .cmdrow button{flex:0 0 auto;padding:8px 16px}
   .join button.primary{background:#3E6B4F;color:#EAF6EE}
-  .join .warnline{color:var(--amber);font-size:12px;margin-top:8px}
+  .join .warnline{color:var(--amber);font-size:11.5px;margin-top:6px}
 </style>
 </head>
 <body>
@@ -150,12 +153,11 @@ static class WebPage
     <div class="card">
       <h2>加入这台服务器 <span class="hint" id="joinHint"></span></h2>
       <div class="join">
-        <div class="cmd" id="joinCmd">服务器开图后这里会出现加入指令。</div>
-        <div class="steps">
-          使用方法：<b>复制</b>上面这一整行 → 按 <b>Win + R</b> 打开“运行” → <b>粘贴</b> → 回车。<br>
-          不用装启动器，也不用打开游戏控制台；Steam 会自动带参数启动 CS2 并连进来。
+        <div class="cmdrow">
+          <div class="cmd" id="joinCmd">服务器开图后这里会出现加入指令。</div>
+          <button class="primary" id="copyJoin">复制</button>
         </div>
-        <div class="row"><button class="primary" id="copyJoin">复制加入指令</button></div>
+        <div class="steps">按 <b>Win + R</b> 打开“运行”，<b>粘贴</b>，回车。Steam 会带参数拉起 CS2 直接连进来。</div>
         <div class="warnline" id="joinWarn" hidden></div>
       </div>
     </div>
@@ -294,7 +296,7 @@ static class WebPage
 
   function copyJoin(){
     if (!joinCommand) return;
-    var done = function(){ toast("已复制。现在按 Win + R，粘贴，回车。"); };
+    var done = function(){ toast("已复制。按 Win + R 打开“运行”，粘贴，回车。"); };
     if (navigator.clipboard && navigator.clipboard.writeText){
       navigator.clipboard.writeText(joinCommand).then(done, function(){ fallbackCopy(); });
     } else fallbackCopy();
