@@ -109,11 +109,33 @@ public partial class MainWindow
             .Distinct()
             .ToList();
 
+    // Deliberately its own file: preferences.json is rewritten by scans and other
+    // unrelated actions, and every one of those rewrites came from an object that
+    // had never held this value, which silently erased it. A one-line file cannot
+    // be clobbered by code that does not know about it.
+    string JoinAddressPath => Path.Combine(dataDir, "join-address.txt");
+    string joinAddress = "";
+    void LoadJoinAddress()
+    {
+        try
+        {
+            joinAddress = File.Exists(JoinAddressPath)
+                ? File.ReadAllText(JoinAddressPath).Trim()
+                : (prefs.JoinAddress ?? "").Trim();
+            if (joinAddress.Length > 0 && !File.Exists(JoinAddressPath))
+                File.WriteAllText(JoinAddressPath, joinAddress);
+        }
+        catch (IOException) { joinAddress = (prefs.JoinAddress ?? "").Trim(); }
+        if (JoinAddressBox != null) JoinAddressBox.Text = joinAddress;
+    }
     void JoinAddressChanged(object sender, RoutedEventArgs e)
     {
-        prefs.JoinAddress = JoinAddressBox.Text.Trim();
-        Save();
-        Status("加入地址已保存：" + (prefs.JoinAddress.Length > 0 ? prefs.JoinAddress : "未填（网页改用局域网地址）"));
+        var typed = JoinAddressBox.Text.Trim();
+        if (typed == joinAddress) return;
+        joinAddress = typed;
+        try { File.WriteAllText(JoinAddressPath, typed); }
+        catch (IOException ex) { Status("加入地址没写进磁盘：" + ex.Message); return; }
+        Status("加入地址已保存：" + (typed.Length > 0 ? typed : "未填（网页改用局域网地址）"));
     }
 
     void UpdateWebAddresses()
@@ -293,6 +315,7 @@ public partial class MainWindow
         RoomStatus? room = null; List<PlayerRow> players = new(); int? capacity = null; string? error = null;
         try { (room, players, capacity, error) = await CurrentRoom(false); }
         catch (Exception ex) { error = ex.Message; }
+        players ??= new();               // CurrentRoom may hand back null on failure
         if (room != null) lastRoom = room;
 
         List<string> lines;
@@ -354,7 +377,7 @@ public partial class MainWindow
         // The saved share address wins: it is the one the host actually forwarded,
         // and it may carry its own port (frp maps UDP 10003 -> 27016). Falling
         // back to the game port silently produced a command nobody could use.
-        var saved = (prefs.JoinAddress ?? "").Trim();
+        var saved = joinAddress.Trim();
         var configured = saved.Length > 0 ? saved : AddressBox.Text.Trim();
         if (configured.Length == 0)
             return new { link = "", command = "", source = "", error = "" };

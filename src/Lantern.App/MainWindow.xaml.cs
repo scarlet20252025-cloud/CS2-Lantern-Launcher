@@ -87,7 +87,7 @@ public partial class MainWindow : Window
             LoadSettings(prefs.Settings); TrayCheck.IsChecked = prefs.CloseToTray; ready = true; HostChanged(null, null!);
             // Must happen before any Save(): Save() writes this box back to prefs,
             // and Scan() below saves, so an empty box here would erase the address.
-            JoinAddressBox.Text = prefs.JoinAddress;
+            LoadJoinAddress();
             SetView(prefs.GridView);
             // Restore a deliberate official-map selection (including crash recovery).
             // New users still default to local workshop maps.
@@ -525,7 +525,7 @@ public partial class MainWindow : Window
     void Save()
     {
         prefs.SelectedIdentity = (MapList.SelectedItem as MapEntry)?.Identity ?? prefs.SelectedIdentity;
-        prefs.Root = RootBox.Text.Trim(); prefs.JoinAddress = JoinAddressBox.Text.Trim(); prefs.Extra = ExtraBox.Text;
+        prefs.Root = RootBox.Text.Trim(); prefs.Extra = ExtraBox.Text;
         try { prefs.Settings = Settings() with { Token = "", ConsolePassword = "" }; } catch (ArgumentException) { }
         var file = Path.Combine(dataDir, "preferences.json");
         File.WriteAllText(file + ".tmp", JsonSerializer.Serialize(prefs, new JsonSerializerOptions { WriteIndented = true })); File.Move(file + ".tmp", file, true);
