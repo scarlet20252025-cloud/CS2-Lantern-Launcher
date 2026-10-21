@@ -50,7 +50,10 @@ public partial class MainWindow
         {
             web = new MiniHttp(port, Handle);
             web.Start();
-            WebState.Text = "网页控制台已启动。同一局域网（或你转发的公网端口）打开：" + string.Join("   ", WebUrls(port));
+            WebState.Text = "网页控制台已启动（不需要先开服务器）。本机打开：http://127.0.0.1:" + port + "/"
+                + (LanAddresses().FirstOrDefault() is string lan
+                    ? "；好友打开：http://" + lan + ":" + port + "/" + (ProxyWarning("http://" + lan + ":" + port + "/") is string w ? "\n" + w : "")
+                    : "；暂未找到内网地址。");
         }
         catch (Exception ex)
         {
@@ -67,7 +70,38 @@ public partial class MainWindow
         web = null;
     }
 
-    static IEnumerable<string> WebUrls(int port) => LanAddresses().Select(a => $"http://{a}:{port}/");
+    // Loopback first: it is the one URL that always works on this machine and is
+    // exempt from every proxy configuration. The LAN addresses are for sharing.
+    static IEnumerable<string> WebUrls(int port) =>
+        new[] { $"http://127.0.0.1:{port}/" }.Concat(LanAddresses().Select(a => $"http://{a}:{port}/"));
+
+    // Friends reach this through a LAN or forwarded address. A system proxy that
+    // does not exempt that address answers 502 before the request ever gets here,
+    // which looks exactly like the console being down. Say so instead.
+    static string? ProxyWarning(string url)
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Internet Settings");
+            if (Convert.ToInt32(key?.GetValue("ProxyEnable") ?? 0) != 1) return null;
+            var server = Convert.ToString(key?.GetValue("ProxyServer") ?? "");
+            if (server.Length == 0) return null;
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return null;
+            var host = uri.Host;
+            var bypass = Convert.ToString(key?.GetValue("ProxyOverride") ?? "");
+            foreach (var pattern in bypass.Split(';', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var rule = pattern.Trim();
+                if (rule.Equals("<local>", StringComparison.OrdinalIgnoreCase) && !host.Contains('.')) return null;
+                if (rule is "localhost" && host is "localhost" or "127.0.0.1") return null;
+                if (rule.EndsWith("*", StringComparison.Ordinal) && host.StartsWith(rule[..^1], StringComparison.OrdinalIgnoreCase)) return null;
+                if (rule.Equals(host, StringComparison.OrdinalIgnoreCase)) return null;
+            }
+            return $"浏览器走系统代理 {server}，而 {host} 不在代理的忽略列表里，打开会得到 502（页面看起来像挂了）。把 {host} 加进代理绕过列表，或让好友关闭代理。";
+        }
+        catch { return null; }
+    }
 
     static IEnumerable<string> LanAddresses() =>
         System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
@@ -83,10 +117,10 @@ public partial class MainWindow
     void UpdateWebAddresses()
     {
         var port = web?.Port ?? (prefs.WebPort is >= 1024 and <= 65535 ? prefs.WebPort : DefaultWebPort);
-        var urls = WebUrls(port).ToList();
+        var urls = LanAddresses().Select(a => $"http://{a}:{port}/").ToList();
         WebAddressBox.ItemsSource = urls;
         WebAddressBox.SelectedIndex = urls.Count > 0 ? 0 : -1;
-        if (urls.Count == 0) WebState.Text = "没有找到可用的内网地址（网络未连接？）。";
+        if (urls.Count == 0) WebState.Text = "没有找到可用的内网地址（网络未连接？）。本机仍可用 http://127.0.0.1:" + port + "/ 打开。";
     }
 
     void ShowWebConsole(object sender, RoutedEventArgs e)
@@ -108,9 +142,10 @@ public partial class MainWindow
     {
         try
         {
-            var url = WebAddressBox.SelectedItem as string ?? WebAddressBox.Text;
-            if (string.IsNullOrWhiteSpace(url)) throw new InvalidOperationException("还没有可用地址。");
-            if (web == null) throw new InvalidOperationException("网页控制台未启动，请先勾选“启用网页控制台”。");
+            // Local verification always uses loopback: it needs no proxy exemption
+            // and works even when the machine has no LAN address yet.
+            var url = web == null ? "" : $"http://127.0.0.1:{web.Port}/";
+            if (string.IsNullOrWhiteSpace(url)) throw new InvalidOperationException("网页控制台未启动。");
             // The fragment carries the token: never sent to the server, never in a
             // request log, and the host does not have to retype it.
             OpenUri(url + "#token=" + webToken);
@@ -125,8 +160,11 @@ public partial class MainWindow
         {
             var url = WebAddressBox.SelectedItem as string ?? WebAddressBox.Text;
             if (string.IsNullOrWhiteSpace(url)) throw new InvalidOperationException("还没有可用地址。");
+            if (url.Contains("127.0.0.1") || url.Contains("localhost"))
+                throw new InvalidOperationException("127.0.0.1 只有你自己能打开。请在下拉框里选一个局域网地址再复制。");
             Clipboard.SetText(url + "  口令：" + webToken);
-            Status("已复制网页地址和口令，发给好友即可。公网访问需要你自己把该端口转发出去。");
+            Status("已复制网页地址和口令，发给好友即可。公网访问需要你自己把该端口转发出去。"
+                + (ProxyWarning(url) is string warn ? " 注意：" + warn : ""));
         }
         catch (Exception ex) { Error(ex); }
     }

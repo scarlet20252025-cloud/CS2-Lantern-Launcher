@@ -18,7 +18,9 @@ public sealed class Preferences
     // Closing the window may hide to the tray instead of quitting.
     public bool CloseToTray { get; set; } = true;
     // The LAN console is opt-in: an open port is a decision the host makes.
-    public bool WebEnabled { get; set; }
+    // On by default: the point of the page is that friends can look before anyone
+    // starts a map, so it must not depend on the host remembering a checkbox.
+    public bool WebEnabled { get; set; } = true;
     public int WebPort { get; set; } = 8787;
     public string WebToken { get; set; } = "";
     public string SelectedIdentity { get; set; } = "";
