@@ -298,6 +298,7 @@ public partial class MainWindow : Window
                 if (Environment.GetCommandLineArgs().Contains("--web-layout"))
                 {
                     SettingsTabs.SelectedIndex = 2;
+                    WebSection.IsExpanded = true;
                     WebCheck.IsChecked = true; WebPanel.Visibility = Visibility.Visible;
                     StartWebConsole();
                     await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
@@ -318,6 +319,7 @@ public partial class MainWindow : Window
                 if (Environment.GetCommandLineArgs().Contains("--web-smoke")) await TestWebConsole();
                 if (Environment.GetCommandLineArgs().Contains("--web-hold"))
                 {
+                    WebSection.IsExpanded = true;
                     WebCheck.IsChecked = true; WebPanel.Visibility = Visibility.Visible;
                     var holdArgs = Environment.GetCommandLineArgs();
                     int holdPort = holdArgs.Contains("--web-port") ? int.Parse(holdArgs[Array.IndexOf(holdArgs, "--web-port") + 1]) : 8787;
@@ -373,7 +375,30 @@ public partial class MainWindow : Window
                         frame.Render(this); var shot = new PngBitmapEncoder(); shot.Frames.Add(BitmapFrame.Create(frame));
                         using var file = File.Create(Path.Combine(dataDir, $"tab-{index}.png")); shot.Save(file);
                     }
-                    File.WriteAllText(Path.Combine(dataDir, "tab-layout.txt"), "PASS rendered " + SettingsTabs.Items.Count + " tabs: " + string.Join(", ", SettingsTabs.Items.Cast<TabItem>().Select(t => t.Header)));
+                    // The restart button must be reachable without opening a tab or
+                    // scrolling: assert it is outside the TabControl and on screen in
+                    // dedicated modes. Its absence was the v0.5.30 complaint.
+                    var hostIndex = HostBox.SelectedIndex;
+                    HostBox.SelectedIndex = 1;
+                    await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+                    UpdateLayout();
+                    var restartOwner = System.Windows.Media.VisualTreeHelper.GetParent(RestartServerButton);
+                    var inTabs = false;
+                    for (var walk = restartOwner; walk != null; walk = System.Windows.Media.VisualTreeHelper.GetParent(walk))
+                        if (ReferenceEquals(walk, SettingsTabs)) inTabs = true;
+                    if (inTabs) throw new Exception("Restart button is still inside the settings tabs");
+                    if (RestartServerButton.Visibility != Visibility.Visible)
+                        throw new Exception("Restart button is not visible in dedicated mode");
+                    var at = RestartServerButton.TranslatePoint(new System.Windows.Point(0, 0), this);
+                    if (at.Y + RestartServerButton.ActualHeight > ActualHeight || at.Y < 0)
+                        throw new Exception($"Restart button is off screen at y={at.Y:0}");
+                    HostBox.SelectedIndex = 0;
+                    await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+                    UpdateLayout();
+                    if (RestartServerButton.Visibility != Visibility.Collapsed)
+                        throw new Exception("Restart button shows in the listen mode, where there is no server to restart");
+                    HostBox.SelectedIndex = hostIndex;
+                    File.WriteAllText(Path.Combine(dataDir, "tab-layout.txt"), "PASS rendered " + SettingsTabs.Items.Count + " tabs: " + string.Join(", ", SettingsTabs.Items.Cast<TabItem>().Select(t => t.Header)) + "; restart button sits in the action bar, visible in dedicated mode only, at y=" + at.Y.ToString("0"));
                 }
                 if (Environment.GetCommandLineArgs().Contains("--terminal-smoke"))
                 {
@@ -479,7 +504,6 @@ public partial class MainWindow : Window
         TimeBox.Text = s.RoundMinutes.ToString(); FreezeBox.Text = s.FreezeSeconds.ToString(); MoneyBox.Text = s.StartMoney.ToString();
         BalanceCheck.IsChecked = s.AutoBalance; FriendlyCheck.IsChecked = s.FriendlyFire; CheatsCheck.IsChecked = s.Cheats; RulesCheck.IsChecked = s.ApplyRules;
         NameBox.Text = s.Name; PortBox.Text = s.Port.ToString();
-        ConsoleCheck.IsChecked = s.EnableConsole;
     }
     HostSettings Settings()
     {
@@ -489,7 +513,7 @@ public partial class MainWindow : Window
             RoundMinutes = Number(TimeBox, "回合时间"), FreezeSeconds = Number(FreezeBox, "冻结时间"), StartMoney = Number(MoneyBox, "初始金钱"),
             AutoBalance = BalanceCheck.IsChecked == true, FriendlyFire = FriendlyCheck.IsChecked == true, Cheats = CheatsCheck.IsChecked == true, ApplyRules = RulesCheck.IsChecked == true,
             Name = NameBox.Text, Port = Number(PortBox, "端口"), Token = TokenBox.Password,
-            EnableConsole = ConsoleCheck.IsChecked == true };
+            EnableConsole = true };
     }
     void Save()
     {
@@ -684,7 +708,7 @@ public partial class MainWindow : Window
             }
             SearchBox.Clear(); FilterBox.SelectedIndex = 0; Save(); SetBusy(false); await Scan();
             MapList.SelectedItem = maps.FirstOrDefault(m => m.Id == accepted[0].Id);
-            OpenUri("steam://url/CommunityFilePage/" + accepted[0].Id);
+            OpenUri(Workshop.FilePageUrl(accepted[0].Id));
             Status($"已添加 {accepted.Length} 张地图；Steam 下载完成后会自动转为可开图。多个链接可一次粘贴。");
         }
         catch (Exception ex) { Error(ex); }
@@ -696,12 +720,6 @@ public partial class MainWindow : Window
         JoinMainButton.Visibility = HostBox.SelectedIndex == 0 ? Visibility.Collapsed : Visibility.Visible;
         RestartServerButton.Visibility = JoinMainButton.Visibility;
         LaunchButton.Content = HostBox.SelectedIndex == 0 ? "启动所选地图  →" : "启动 / 切换服务器地图  →";
-        // The console is what makes runtime management (map switching, bots,
-        // room verification) possible, and only the launcher-owned dedicated
-        // server can have one. It is mandatory there, so it is not offered as a
-        // toggle that could only produce a broken server.
-        ConsoleCheck.IsChecked = true;
-        ConsoleCheck.IsEnabled = false;
         UpdateCapacityState();
         roomGeneration++; transitionUnverified = false; observedRoom = null; roomNotice = null;
         if (AddressBox != null) { lastRoom = null; AddressBox.Clear(); }
@@ -947,7 +965,7 @@ public partial class MainWindow : Window
         catch (Exception ex) { Error(ex); }
         finally { SetBusy(false); }
     }
-    void OpenSelectedWorkshop(object sender, RoutedEventArgs e) { try { var map = Selected(); if (map.Official) { Status("这是游戏自带地图。"); return; } OpenUri("steam://url/CommunityFilePage/" + Workshop.ParseId(map.Id)); } catch (Exception ex) { Error(ex); } }
+    void OpenSelectedWorkshop(object sender, RoutedEventArgs e) { try { var map = Selected(); if (map.Official) { Status("这是游戏自带地图。"); return; } OpenUri(Workshop.FilePageUrl(map.Id)); } catch (Exception ex) { Error(ex); } }
     void OpenData(object sender, RoutedEventArgs e) { try { OpenUri(dataDir); } catch (Exception ex) { Error(ex); } }
     TerminalWindow Terminal()
     {

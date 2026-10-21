@@ -92,6 +92,7 @@ public partial class MainWindow
     void ShowWebConsole(object sender, RoutedEventArgs e)
     {
         SettingsTabs.SelectedIndex = 2;
+        WebSection.IsExpanded = true;
         WebPanel.Visibility = Visibility.Visible;
         Dispatcher.BeginInvoke(() => WebPanel.BringIntoView(), System.Windows.Threading.DispatcherPriority.Loaded);
         if (WebCheck.IsChecked != true)
@@ -321,6 +322,9 @@ public partial class MainWindow
                 title = m.Title,
                 mapName = m.MapName,
                 official = m.Official,
+                // The page hands this straight to Steam; the URL is built in Core
+                // so it cannot drift from the launcher's own workshop button.
+                workshopUrl = m.Official ? "" : Workshop.FilePageUrl(m.Id),
                 cover = m.Official ? OfficialMaps.HasCover(m.MapName) : File.Exists(Path.Combine(dataDir, "covers", m.Id + ".jpg")),
                 current = room != null && RoomTransitions.Matches(room, m),
             }).ToList(),

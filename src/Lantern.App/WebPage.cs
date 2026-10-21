@@ -67,10 +67,13 @@ static class WebPage
             font:8px Consolas,monospace;letter-spacing:.04em;text-align:center;overflow:hidden}
   .map .cover img{width:100%;height:100%;object-fit:cover;display:block}
   .map .body{display:flex;flex-direction:column;gap:3px;padding:0;flex:1;min-width:0}
-  .map .t{font-weight:600;font-size:12.5px;line-height:1.3;
+  .map .t{font-weight:600;font-size:12.5px;line-height:1.3;min-height:2.6em;
         display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-  .map .m{font-family:Consolas,monospace;font-size:11px;color:var(--accent);overflow-wrap:anywhere}
-  .map .b{margin:0;padding:6px 11px;font-size:12px;flex:0 0 auto}
+  .map .m{font-family:Consolas,monospace;font-size:11px;color:var(--accent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .note{color:var(--muted);font-size:11.5px;margin:0 0 8px;line-height:1.6}
+  .map .act{display:flex;gap:6px;flex:0 0 auto;align-items:center}
+  .map .b{margin:0;padding:6px 11px;font-size:12px;flex:0 0 auto;text-decoration:none}
+  .map .shop{padding:6px 9px;font-size:11.5px;color:#A9C6E8;border-color:#2f4a63}
   .hero{display:flex;gap:12px;align-items:stretch;margin-bottom:9px}
   .hero[hidden]{display:none}
   #mapsEmpty[hidden],#playersEmpty[hidden],#gate[hidden],#app[hidden]{display:none}
@@ -173,6 +176,7 @@ static class WebPage
 
     <div class="card">
       <h2>换地图 <span class="hint">换图会保留房间，但正在加载的玩家可能掉线</span></h2>
+      <p class="note">好友没有这张图？点卡片上的「订阅」打开 Steam 工坊页，订阅后由 Steam 下载；已订阅过的只会显示“已订阅”，不会重复下载。</p>
       <div class="row" style="margin-bottom:10px">
         <input id="mapFilter" placeholder="筛选地图名称或文件名…">
       </div>
@@ -336,12 +340,26 @@ static class WebPage
       body.className = "body";
       body.innerHTML = '<div class="t">' + esc(m.title) + '</div><div class="m">' + esc(m.mapName) + '</div>';
       card.appendChild(body);
+      var act = document.createElement("div");
+      act.className = "act";
+      if (m.workshopUrl){
+        // Steam has no protocol that subscribes silently, so this opens the item
+        // page: subscribing there is the download, and an item already owned
+        // shows 已订阅 instead of downloading twice. href= so the browser asks.
+        var shop = document.createElement("a");
+        shop.className = "b shop";
+        shop.href = m.workshopUrl;
+        shop.textContent = "订阅";
+        shop.title = "打开这张图的 Steam 创意工坊页；已订阅过的会显示“已订阅”，不会重复下载";
+        act.appendChild(shop);
+      }
       var b = document.createElement("button");
       b.className = "b" + (m.current ? " ghost" : " primary");
-      b.textContent = m.current ? "当前地图" : "换到这张";
+      b.textContent = m.current ? "当前地图" : "换这张";
       b.disabled = m.current || (lastState && lastState.busy);
       b.onclick = function(){ switchMap(m); };
-      card.appendChild(b);
+      act.appendChild(b);
+      card.appendChild(act);
       host.appendChild(card);
     });
     $("mapsEmpty").hidden = shown > 0;

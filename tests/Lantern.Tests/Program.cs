@@ -382,6 +382,15 @@ try
     Check(!RoomTransitions.SameEndpoint(roomBefore with { Identity = "[A:1:0:0]" }, roomBefore with { Identity = "[A:1:0:0]" }), "invalid Steam identity cannot prove endpoint continuity");
     Check(RoomTransitions.ConsoleCommands(switchPlan.Boot).Contains("changelevel ") && !RoomTransitions.ConsoleCommands(switchPlan.Boot).Contains("exec "), "live switching bypasses restricted workshop cfg execution");
     Check(RoomTransitions.ConsoleCommands("// generated\r\nsv_lan 0\r\n\r\necho OK\n") == "sv_lan 0; echo OK", "generated config becomes one valid console command without comments or newlines");
+    // The web page hands this straight to Steam, so it must be a real protocol URL
+    // for a numeric workshop id and must refuse anything else.
+    Check(Workshop.FilePageUrl("3408790618") == "steam://url/CommunityFilePage/3408790618",
+        "workshop item page url is built from a plain id");
+    Check(Workshop.FilePageUrl("https://steamcommunity.com/sharedfiles/filedetails/?id=3408790618")
+        == "steam://url/CommunityFilePage/3408790618",
+        "workshop item url accepts a pasted link");
+    Reject(() => Workshop.FilePageUrl("de_dust2"), "workshop item url refuses a map name");
+
     // --- LAN console transport -------------------------------------------------
     // The web console binds a raw socket instead of using HttpListener (which
     // needs an elevated URL ACL for anything but localhost), so the request line

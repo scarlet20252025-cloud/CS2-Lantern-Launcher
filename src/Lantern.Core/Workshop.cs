@@ -27,6 +27,16 @@ public sealed class Workshop
         throw new ArgumentException("请粘贴 steamcommunity.com 工坊条目链接或数字 ID。");
     }
 
+    // Steam has no protocol that subscribes to a workshop item silently; the item
+    // page is the closest thing, and Steam itself skips the download when the
+    // account already owns the subscription. Built here so the launcher and the
+    // web page cannot drift apart.
+    public static string FilePageUrl(string id)
+    {
+        var clean = ParseId(id);
+        return "steam://url/CommunityFilePage/" + clean;
+    }
+
     public async Task<List<WorkshopItem>> Fetch(IEnumerable<string> ids, CancellationToken ct = default)
     {
         var result = new List<WorkshopItem>();
