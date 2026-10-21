@@ -142,10 +142,7 @@ static class WebPage
   .join .steps{color:#9FC0AC;font-size:11.5px;margin-top:7px;line-height:1.6}
   .join .steps b{color:var(--accent)}
   .join .cmdrow{display:flex;gap:8px;align-items:stretch;margin-bottom:8px}
-  .join .addrrow{display:flex;gap:8px;align-items:center;margin-top:8px}
-  .join .addrrow .lbl{color:var(--muted);font-size:11.5px;flex:0 0 auto}
-  .join .addrrow input{flex:1;min-width:0;margin:0;padding:7px 10px}
-  .join .addrrow button{flex:0 0 auto;padding:7px 14px}
+
   .join .joinbtn{display:flex;align-items:center;justify-content:center;flex:1;
                  padding:9px 16px;font-size:13.5px;font-weight:600;text-decoration:none;
                  background:var(--amber);color:#141C25;border:1px solid transparent;border-radius:8px}
@@ -200,11 +197,6 @@ static class WebPage
           <button class="primary" id="copyJoin">复制指令</button>
         </div>
         <div class="cmd" id="joinCmd">服务器开图后这里会出现加入指令。</div>
-        <div class="addrrow">
-          <span class="lbl">对外地址</span>
-          <input id="joinAddr" placeholder="39.108.93.52:10003" spellcheck="false" autocomplete="off">
-          <button id="saveAddr" class="ghost">保存</button>
-        </div>
         <div class="steps">点「加入服务器」Steam 会直接带参数拉起 CS2 连进来；浏览器会先问一次是否允许打开 Steam。复制指令后也可以 <b>Win + R</b> 粘贴回车。</div>
         <div class="warnline" id="joinWarn" hidden></div>
       </div>
@@ -365,15 +357,13 @@ static class WebPage
     joinCommand = command;
     // A plain <a href="steam://…"> is the same mechanism the 订阅 button uses:
     // the browser asks once, then Steam takes over. No console, no Win+R.
-    var addr = $("joinAddr");
-    if (addr && document.activeElement !== addr) addr.value = join.configured || "";
     var link = $("joinLink");
     if (join.link){
       link.href = join.link; link.hidden = false;
       link.textContent = "加入服务器";
     } else { link.hidden = true; link.removeAttribute("href"); }
     if (!command){
-      box.textContent = "房主还没填对外地址。请在启动器「好友联机」页填上公网 IP 或域名，或让房主把这条指令发给你。";
+      box.textContent = "房主还没填加入地址，暂时无法生成加入指令。";
       hint.textContent = "";
       $("copyJoin").disabled = true;
       if (join.error){ warn.hidden = false; warn.textContent = join.error; }
@@ -659,21 +649,6 @@ static class WebPage
       }).catch(function(e){ busy(false); toast("请求失败：" + e.message, true); });
     };
   });
-
-  // One line of config, editable where its effect is visible.
-  (function(){
-    var box = $("joinAddr"), save = $("saveAddr");
-    save.onclick = function(){
-      var value = (box.value || "").trim();
-      save.disabled = true;
-      api("/api/address", { address: value }).then(function(r){
-        save.disabled = false;
-        if (r.ok) { toast(r.detail || "已保存"); tick(); }
-        else toast(r.error || "保存失败", true);
-      }).catch(function(e){ save.disabled = false; toast("请求失败：" + e.message, true); });
-    };
-    box.addEventListener("keydown", function(e){ if (e.key === "Enter") save.click(); });
-  })();
 
   tick();
 })();
