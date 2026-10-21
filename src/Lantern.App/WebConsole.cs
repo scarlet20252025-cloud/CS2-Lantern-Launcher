@@ -234,6 +234,7 @@ public partial class MainWindow
                 ("/api/map", "POST") => HttpResponse.Json(await OnUi(() => SwitchMapFromWeb(request))),
                 ("/api/command", "POST") => HttpResponse.Json(await OnUi(() => CommandFromWeb(request))),
                 ("/api/bots", "POST") => HttpResponse.Json(await OnUi(() => BotsFromWeb(request))),
+                ("/api/quick", "POST") => HttpResponse.Json(await OnUi(() => QuickFromWeb(request))),
                 _ => HttpResponse.Text("没有这个接口。", 404),
             };
         }
@@ -485,6 +486,36 @@ public partial class MainWindow
                         return JsonSerializer.Serialize(new { ok = true, detail = "已发送重开对局命令。" });
                     default: throw new ArgumentException("不认识的操作。");
                 }
+            }
+            finally { webBusy--; }
+        }
+        catch (Exception ex) { return Fail(ex.Message); }
+    }
+
+    // A closed list, not a command passthrough: whoever holds the token can already
+    // type into /api/command, so this exists to be obvious, not to be powerful.
+    async Task<string> QuickFromWeb(HttpRequest request)
+    {
+        string action;
+        try
+        {
+            using var json = JsonDocument.Parse(request.Body);
+            action = json.RootElement.TryGetProperty("action", out var a) ? a.GetString() ?? "" : "";
+        }
+        catch (JsonException) { return Fail("请求格式不对。"); }
+        // The list lives in Core so it can be tested without a server.
+        var command = QuickCommands.ForAction(action);
+        if (command == null) return Fail("不认识的操作。");
+        try
+        {
+            if (launching || webBusy > 0) throw new InvalidOperationException("服务器正在处理上一次操作，请稍后再试。");
+            webBusy++;
+            try
+            {
+                var console = Terminal();
+                await console.ConnectGame();
+                await console.SendCommand(command);
+                return JsonSerializer.Serialize(new { ok = true, detail = "已下发：" + command });
             }
             finally { webBusy--; }
         }

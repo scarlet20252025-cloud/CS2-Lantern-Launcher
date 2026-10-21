@@ -312,6 +312,47 @@ public static class QuickCommands
     }
     public const string RemoveBots = "bot_quota 0; bot_kick";
     public const string Restart = "mp_restartgame 1";
+    // The web console offers the same handful of actions as the desktop terminal.
+    // Keeping the strings here means a command is fixed in one place, not two.
+    public const string SwapTeams = "mp_swapteams";
+    public const string WarmupStart = "mp_warmup_start";
+    public const string WarmupEnd = "mp_warmup_end";
+    public const string PauseMatch = "mp_pause_match";
+    public const string UnpauseMatch = "mp_unpause_match";
+    public const string PracticeEconomy = "mp_maxmoney 60000; mp_startmoney 60000; mp_afterroundmoney 60000";
+    public const string EnableCheats = "sv_cheats 1";
+    public const string DisableCheats = "sv_cheats 0";
+    public const string InfiniteAmmo = "sv_infinite_ammo 1";
+    public const string NormalAmmo = "sv_infinite_ammo 0";
+    public static string BotDifficulty(int level) => level is < 0 or > 3
+        ? throw new ArgumentException("人机难度需为 0–3（0 简单、3 专家）。")
+        : $"bot_difficulty {level}";
+
+    /// <summary>
+    /// The web console's quick actions, kept as a closed list: an unknown name
+    /// returns null instead of being passed through as a command. Returning the
+    /// command rather than executing it lets the mapping be tested without a
+    /// server.
+    /// </summary>
+    public static string? ForAction(string action) => action switch
+    {
+        "swap" => SwapTeams,
+        "warmup_on" => WarmupStart,
+        "warmup_off" => WarmupEnd,
+        "pause" => PauseMatch,
+        "unpause" => UnpauseMatch,
+        "restart" => Restart,
+        "practice_money" => PracticeEconomy,
+        "cheats_on" => EnableCheats,
+        "cheats_off" => DisableCheats,
+        "ammo_on" => InfiniteAmmo,
+        "ammo_off" => NormalAmmo,
+        "diff0" => BotDifficulty(0),
+        "diff1" => BotDifficulty(1),
+        "diff2" => BotDifficulty(2),
+        "diff3" => BotDifficulty(3),
+        _ => null,
+    };
     public static string Balance(int totalPlayers)
     {
         if (totalPlayers is < 2 or > 64) throw new ArgumentException("补位总人数需为 2–64（包含玩家）。");

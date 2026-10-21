@@ -391,6 +391,25 @@ try
         "workshop item url accepts a pasted link");
     Reject(() => Workshop.FilePageUrl("de_dust2"), "workshop item url refuses a map name");
 
+    // The web's quick-action chips map to these; a wrong index silently gives the
+    // wrong difficulty, so the range is checked rather than trusted.
+    Check(QuickCommands.BotDifficulty(0) == "bot_difficulty 0" && QuickCommands.BotDifficulty(3) == "bot_difficulty 3",
+        "bot difficulty 0-3 maps to bot_difficulty");
+    Reject(() => QuickCommands.BotDifficulty(4), "bot difficulty above 3 is refused");
+    Reject(() => QuickCommands.BotDifficulty(-1), "negative bot difficulty is refused");
+    Check(QuickCommands.RemoveBots == "bot_quota 0; bot_kick" && QuickCommands.Restart == "mp_restartgame 1",
+        "clear-bots and restart keep their exact commands");
+
+    // The web's quick chips are a closed list; every name the page sends must
+    // resolve, and anything else must come back null rather than as a command.
+    foreach (var action in new[] { "swap", "warmup_on", "warmup_off", "pause", "unpause", "restart",
+                                   "practice_money", "cheats_on", "cheats_off", "ammo_on", "ammo_off",
+                                   "diff0", "diff1", "diff2", "diff3" })
+        Check(QuickCommands.ForAction(action) is { Length: > 0 }, $"quick action {action} maps to a command");
+    Check(QuickCommands.ForAction("diff3") == "bot_difficulty 3", "quick action diff3 is expert difficulty");
+    Check(QuickCommands.ForAction("rm -rf") == null, "quick action refuses anything not on the list");
+    Check(QuickCommands.ForAction("") == null, "quick action refuses an empty name");
+
     // --- LAN console transport -------------------------------------------------
     // The web console binds a raw socket instead of using HttpListener (which
     // needs an elevated URL ACL for anything but localhost), so the request line

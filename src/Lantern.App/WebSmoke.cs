@@ -209,6 +209,19 @@ public partial class MainWindow
         if (seen == null) throw new Exception($"Command {marker} never came back from the engine within 20s (only our own outgoing echo was seen)");
         evidence.Add($"PASS command reached the engine and its reply came back: {seen!.Trim()}");
 
+        // 6b. The quick-action chips are a closed list: an unknown name is refused
+        // rather than silently doing nothing, and a known one reaches the engine.
+        var bogus = await client.PostAsync("api/quick", new StringContent("{\"action\":\"rm -rf\"}", Encoding.UTF8, "application/json"));
+        var bogusBody = await bogus.Content.ReadAsStringAsync();
+        if (bogusBody.Contains("\"ok\":true")) throw new Exception("Quick endpoint accepted an unknown action: " + bogusBody);
+        evidence.Add("PASS unknown quick action rejected: " + bogusBody.Trim());
+
+        var swap = await client.PostAsync("api/quick", new StringContent("{\"action\":\"swap\"}", Encoding.UTF8, "application/json"));
+        var swapBody = await swap.Content.ReadAsStringAsync();
+        if (!swapBody.Contains("\"ok\":true")) throw new Exception("Quick action swap was refused: " + swapBody);
+        if (!swapBody.Contains(QuickCommands.SwapTeams)) throw new Exception("Quick action did not report the command it sent: " + swapBody);
+        evidence.Add("PASS quick action swap reached the engine: " + QuickCommands.SwapTeams);
+
         // 7. Nothing in the page can stop the server.
         foreach (var forbidden in new[] { "/api/stop", "/api/start", "/api/restart", "/api/shutdown" })
         {

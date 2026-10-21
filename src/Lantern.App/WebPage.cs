@@ -58,7 +58,7 @@ static class WebPage
   button.primary{background:var(--amber);color:#141C25;font-weight:600;border-color:transparent}
   button.warn{background:#3a2b22;color:#FFD09A;border-color:#5a4527}
   button.ghost{background:transparent}
-  .maps{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:7px;max-height:288px;overflow:auto;padding-right:4px}
+  .maps{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:7px;max-height:min(52vh,460px);overflow:auto;padding-right:4px}
   .map{display:flex;flex-direction:row;align-items:center;gap:10px;background:var(--card2);
      border:1px solid var(--line);border-radius:9px;padding:8px 10px;text-align:left;overflow:hidden}
   .map.cur{border-color:var(--amber);background:#302B26}
@@ -91,6 +91,17 @@ static class WebPage
   #log .echo{color:#8FA6BF}
   .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
   .row input{flex:1 1 240px;min-width:0}
+  /* Bot actions: label / number / buttons, one line each. A stretched grid put
+     the second team button at the far edge and the number box ate the row. */
+  .acts{display:flex;flex-direction:column;gap:8px}
+  .acts .arow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .acts .lbl{color:var(--dim);font-size:11.5px;flex:0 0 62px}
+  .acts .num{width:64px;flex:0 0 64px}
+  .acts button{padding:7px 12px;font-size:12.5px}
+  .acts .push{margin-left:auto}
+  @media (max-width:620px){ .acts .push{margin-left:0;width:100%} }
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chips button{padding:6px 11px;font-size:12px;border-radius:7px}
   input{font:inherit;background:#0F1A28;border:1px solid var(--line);border-radius:8px;
         color:var(--text);padding:8px 11px;width:100%}
   input:focus{outline:none;border-color:var(--amber)}
@@ -185,17 +196,47 @@ static class WebPage
     </div>
 
     <div class="card">
-      <h2>人机与对局</h2>
-      <div class="row" style="margin-bottom:10px">
-        <button data-bot="add" data-team="t">加 T 人机</button>
-        <button data-bot="add" data-team="ct">加 CT 人机</button>
-        <input id="botCount" class="num" type="number" min="1" max="32" value="1" title="每次添加的数量">
-        <button data-bot="remove" class="warn">清除所有人机</button>
+      <h2>人机与对局 <span class="hint">人数含真人；命令直接下发到服务器</span></h2>
+      <div class="acts">
+        <div class="arow">
+          <span class="lbl">人机数量</span>
+          <input id="botCount" class="num" type="number" min="1" max="32" value="1" title="每次添加的人机数量">
+          <button data-bot="add" data-team="t">加 T 人机</button>
+          <button data-bot="add" data-team="ct">加 CT 人机</button>
+          <button data-bot="remove" class="warn push" title="bot_quota 0; bot_kick">清除所有人机</button>
+        </div>
+        <div class="arow">
+          <span class="lbl">按总人数</span>
+          <input id="balanceTotal" class="num" type="number" min="2" max="64" value="10" title="补位后总人数（含真人）">
+          <button data-bot="balance">补齐到该人数</button>
+        </div>
       </div>
-      <div class="row">
-        <input id="balanceTotal" class="num" type="number" min="2" max="64" value="10" title="补位后总人数（含真人）">
-        <button data-bot="balance">按总人数补位</button>
-        <button data-bot="restart" class="ghost">重开对局</button>
+
+      <h2 style="margin-top:14px">对局操作</h2>
+      <div class="chips">
+        <button data-quick="restart">重开对局</button>
+        <button data-quick="swap">交换阵营</button>
+        <button data-quick="pause">暂停</button>
+        <button data-quick="unpause">继续</button>
+        <button data-quick="warmup_on">开始热身</button>
+        <button data-quick="warmup_off">结束热身</button>
+      </div>
+
+      <h2 style="margin-top:14px">人机难度</h2>
+      <div class="chips">
+        <button data-quick="diff0">简单</button>
+        <button data-quick="diff1">普通</button>
+        <button data-quick="diff2">困难</button>
+        <button data-quick="diff3">专家</button>
+      </div>
+
+      <h2 style="margin-top:14px">练习与权限</h2>
+      <div class="chips">
+        <button data-quick="cheats_on">启用练习权限</button>
+        <button data-quick="cheats_off">关闭练习权限</button>
+        <button data-quick="ammo_on">无限弹药</button>
+        <button data-quick="ammo_off">正常弹药</button>
+        <button data-quick="practice_money">练习经济 60000</button>
       </div>
     </div>
 
@@ -481,6 +522,19 @@ static class WebPage
     }).catch(function(e){ toast("请求失败：" + e.message, true); });
   };
   $("token").onkeydown = function(e){ if (e.key === "Enter") $("login").click(); };
+
+  document.querySelectorAll("[data-quick]").forEach(function(el){
+    el.onclick = function(){ quick(el.getAttribute("data-quick")); };
+  });
+
+  function quick(action){
+    busy(true);
+    return api("/api/quick", { action: action }).then(function(r){
+      busy(false);
+      if (r.ok) { toast(r.detail || "已执行"); setTimeout(tick, 600); }
+      else toast(r.error, true);
+    }).catch(function(e){ busy(false); toast("请求失败：" + e.message, true); });
+  }
 
   $("copyJoin").onclick = copyJoin;
   $("send").onclick = send;
