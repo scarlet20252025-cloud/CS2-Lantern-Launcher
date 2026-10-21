@@ -37,7 +37,7 @@ static class WebPage
   .card{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:13px;margin-bottom:10px}
   /* Main column plus a fixed players rail; the rail is the thing you glance at
      while playing, so it must not be something you scroll to find. */
-  .cols{display:grid;grid-template-columns:minmax(0,1fr) 292px;gap:10px;align-items:start}
+  .cols{display:grid;grid-template-columns:minmax(0,1fr) 318px;gap:10px;align-items:start}
   .side{position:sticky;top:10px}
   @media (max-width:900px){ .cols{grid-template-columns:1fr} .side{position:static;order:-1} }
   h2{font-size:14px;margin:0 0 9px;font-weight:600;display:flex;align-items:center;gap:8px}
@@ -51,7 +51,7 @@ static class WebPage
   th{text-align:left;color:var(--dim);font-weight:500;font-size:11px;padding:3px 8px;border-bottom:1px solid var(--line)}
   td{padding:5px 8px;border-bottom:1px solid #202d40;font-variant-numeric:tabular-nums}
   tr:last-child td{border-bottom:none}
-  .tag{font-size:10.5px;padding:1px 6px;border-radius:5px;border:1px solid var(--line);color:var(--muted)}
+  .tag{font-size:10.5px;padding:1px 6px;border-radius:5px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
   .tag.bot{color:#8FA6BF;border-color:#2f4a63}
   .tag.human{color:#0F1A0F;background:var(--green);border-color:var(--green);font-weight:600}
   .tag.ok{color:var(--green);border-color:#33523d}
@@ -262,7 +262,7 @@ static class WebPage
     <div class="card">
       <h2>谁在房间里 <span class="hint">只有进入地图的人算“就绪”</span></h2>
       <table>
-        <thead><tr><th style="width:44px">槽位</th><th>名字</th><th style="width:78px">状态</th><th style="width:56px">类型</th></tr></thead>
+        <thead><tr><th style="width:38px">槽位</th><th>名字</th><th style="width:74px">状态</th><th style="width:50px">类型</th></tr></thead>
         <tbody id="players"></tbody>
       </table>
       <div class="empty" id="playersEmpty">还没有人。</div>
@@ -500,7 +500,11 @@ static class WebPage
 
     // Humans first, then bots, and only the first ten bots until asked for more:
     // a full bot roster buried the two people you actually came to look at.
-    var rows = (s.players || []).slice().sort(function(a, b){
+    // The engine reports free slots as id 65535 in state "challenging"; listing
+    // them as 真人 buried the one person actually connected.
+    var rows = (s.players || []).filter(function(p){
+      return p.id !== 65535 && (p.name || "").trim() !== "";
+    }).slice().sort(function(a, b){
       if (a.bot !== b.bot) return a.bot ? 1 : -1;
       return a.id - b.id;
     });

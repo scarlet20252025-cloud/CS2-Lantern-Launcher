@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-    <PropertyGroup><OutputType>WinExe</OutputType><TargetFramework>net10.0-windows</TargetFramework><UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><AssemblyName>CS2Lantern</AssemblyName><Version>0.5.36</Version><ApplicationIcon>Assets/lantern.ico</ApplicationIcon></PropertyGroup>
+    <PropertyGroup><OutputType>WinExe</OutputType><TargetFramework>net10.0-windows</TargetFramework><UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><AssemblyName>CS2Lantern</AssemblyName><Version>0.5.37</Version><ApplicationIcon>Assets/lantern.ico</ApplicationIcon></PropertyGroup>
   <ItemGroup><Resource Include="Assets/lantern.ico"/><Resource Include="Assets/lantern.png"/></ItemGroup>
   <!-- WinForms is only for the tray icon. Its implicit usings would collide with
        WPF types (Application, Panel, TextBox, KeyEventArgs …), so they are

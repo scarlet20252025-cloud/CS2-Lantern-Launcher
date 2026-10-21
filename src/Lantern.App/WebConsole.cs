@@ -287,7 +287,12 @@ public partial class MainWindow
     async Task<string> StateJsonAsync(HttpRequest request)
     {
         long since = long.TryParse(request.Param("since"), out var parsed) ? parsed : webSeq;
-        var (room, players, capacity, error) = await CurrentRoom(false);
+        // A read can fail while the server is between processes (right after a
+        // start or a restart). That is a state, not an API error: answering with
+        // {ok:false} made the page show a failure toast for a normal boot.
+        RoomStatus? room = null; List<PlayerRow> players = new(); int? capacity = null; string? error = null;
+        try { (room, players, capacity, error) = await CurrentRoom(false); }
+        catch (Exception ex) { error = ex.Message; }
         if (room != null) lastRoom = room;
 
         List<string> lines;
