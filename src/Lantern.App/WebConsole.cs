@@ -386,7 +386,7 @@ public partial class MainWindow
             try
             {
                 var url = Hosting.SteamConnectUrl(only[..split], explicitOnly);
-                return new { link = url, command = url, source = "启动器里固定的加入地址", error = "" };
+                return new { link = url, command = url, source = "启动器里固定的加入地址", error = "", configured = joinAddress };
             }
             catch (ArgumentException ex) { return new { link = "", command = "", source = "", error = ex.Message }; }
         }
@@ -411,6 +411,7 @@ public partial class MainWindow
                 command = url,
                 source = saved.Length > 0 ? "启动器里固定的加入地址" : "「好友联机」页填写的地址",
                 error = "",
+                configured = joinAddress,
             };
         }
         catch (ArgumentException ex)
