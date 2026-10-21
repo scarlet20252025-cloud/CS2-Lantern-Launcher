@@ -202,6 +202,13 @@ public partial class MainWindow : Window
                     PlayersBox.Text = target.ToString(); capacityCache = default; UpdateCapacityState();
                     if (!RaiseCapacityButton.IsEnabled) throw new Exception("Capacity button did not enable after the typed value changed.");
                     if (!CapacityState.Text.Contains(target.ToString())) throw new Exception("Capacity state did not name the pending value: " + CapacityState.Text);
+                    if (RaiseCapacityButton.Visibility != Visibility.Visible) throw new Exception("Capacity button was not visible while the typed value differed from the running process.");
+                    SettingsTabs.SelectedIndex = 0;
+                    await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+                    UpdateLayout();
+                    var capFrame = new RenderTargetBitmap((int)ActualWidth, (int)ActualHeight, 96, 96, PixelFormats.Pbgra32);
+                    capFrame.Render(this); var capShot = new PngBitmapEncoder(); capShot.Frames.Add(BitmapFrame.Create(capFrame));
+                    using (var capFile = File.Create(Path.Combine(dataDir, "capacity-entry.png"))) capShot.Save(capFile);
                     await RaiseCapacity(target);
                     capacityCache = default; UpdateCapacityState();
                     if (RaiseCapacityButton.IsEnabled) throw new Exception("Capacity button still enabled after the restart applied the value.");
@@ -213,25 +220,72 @@ public partial class MainWindow : Window
                 }
                 if (Environment.GetCommandLineArgs().Contains("--guard-smoke"))
                 {
-                    // Read-only: the map-change guard used to report "0 ready" for a
-                    // player who was already in the map, because the adr column no
-                    // longer carries a SteamID. Compare it against the server's own
-                    // client count on whatever is running right now.
+                    // Read-only against whatever server is already running: the guard
+                    // must agree with the server's own client count, and it must not
+                    // stay stuck on "spawning" once the player is actually in.
                     if (HostBox.SelectedIndex == 0) HostBox.SelectedIndex = 2;
                     var guardRoot = RootBox.Text.Trim();
                     if (await Task.Run(() => GameProcesses.Find(guardRoot, true)) == null)
                         throw new Exception("No dedicated server is running; this check refuses to start one.");
                     var guardTool = Terminal(); guardTool.Show(); await guardTool.ConnectGame();
-                    var room = await guardTool.GetRoomStatus();
-                    var players = await guardTool.GetPlayers();
-                    int ready = players.Count(p => p.IsReady);
-                    if (room.Humans > 0 && ready != room.Humans)
-                        throw new Exception($"Guard disagrees with the server: {ready} ready but clients_human is {room.Humans}. Rows: " +
-                            string.Join(" | ", players.Select(p => $"{p.Id}:{p.Name}:{p.State}:bot={p.IsBot}")));
+                    var trace = new List<string>();
+                    var watch = Stopwatch.StartNew();
+                    bool agreed = false;
+                    while (watch.Elapsed < TimeSpan.FromSeconds(90))
+                    {
+                        RoomStatus room;
+                        try { room = await guardTool.GetRoomStatus(); }
+                        catch { await Task.Delay(1000); continue; }
+                        var rows = await guardTool.GetPlayers();
+                        int ready = rows.Count(p => p.IsReady);
+                        trace.Add($"{watch.ElapsedMilliseconds}ms humans={room.Humans} ready={ready} [" +
+                            string.Join(",", rows.Where(p => !p.IsEmptySlot).Select(p => $"{p.Name}:{p.State}")) + "]");
+                        if (room.Humans == 0) { await Task.Delay(1000); continue; }
+                        if (ready == room.Humans) { agreed = true; break; }
+                        await Task.Delay(500);
+                    }
                     File.WriteAllText(Path.Combine(dataDir, "guard-smoke.txt"),
-                        $"PASS live server {room.Map}: clients_human {room.Humans} == ready humans {ready}; bots {room.Bots}; rows " +
-                        string.Join(" | ", players.Select(p => $"{p.Id}:{p.State}:bot={p.IsBot}")));
+                        (agreed ? "PASS" : "FAIL") + " guard agreed with clients_human; trace:\n" + string.Join("\n", trace));
+                    if (!agreed) throw new Exception("Guard never agreed with clients_human within 90s:\n" + string.Join("\n", trace.TakeLast(6)));
                     guardTool.Close();
+                }
+                if (Environment.GetCommandLineArgs().Contains("--human-switch-smoke"))
+                {
+                    // The reported bug: a human is already standing in the map and the
+                    // switch is still refused with "ready 0/1". This drives the real
+                    // guard with a real client connected and then really changes map.
+                    if (HostBox.SelectedIndex == 0) HostBox.SelectedIndex = 2;
+                    var hsRoot = RootBox.Text.Trim();
+                    if (await Task.Run(() => GameProcesses.Find(hsRoot, true)) == null) await LaunchSelected();
+                    var hsTool = Terminal(); hsTool.Show(); await hsTool.ConnectGame();
+                    if (await hsTool.GetRoomStatus() is var start && start.Humans == 0)
+                    {
+                        OpenUri(Hosting.SteamConnectUrl("127.0.0.1", start.Port));
+                        var joinDeadline = DateTime.UtcNow.AddSeconds(90);
+                        while (DateTime.UtcNow < joinDeadline && (await hsTool.GetRoomStatus()).Humans == 0) await Task.Delay(1500);
+                    }
+                    // Wait until the engine reports the client as active, which is the
+                    // state the old regex failed to recognise.
+                    var readyDeadline = DateTime.UtcNow.AddSeconds(90);
+                    List<PlayerRow> rows = new();
+                    while (DateTime.UtcNow < readyDeadline)
+                    {
+                        rows = await hsTool.GetPlayers();
+                        if (rows.Any(p => p.IsReady)) break;
+                        await Task.Delay(700);
+                    }
+                    if (!rows.Any(p => p.IsReady)) throw new Exception("Client never became active; rows: " + string.Join(",", rows.Select(p => $"{p.Name}:{p.State}")));
+                    var beforeSwitch = await hsTool.GetRoomStatus();
+                    var hsTarget = maps.First(m => m.Official && m.MapName == "de_dust2");
+                    if (RoomTransitions.Matches(beforeSwitch, hsTarget)) hsTarget = maps.First(m => m.Official && m.MapName == "de_inferno");
+                    launching = true;
+                    try { await SwitchExistingRoom(hsTarget, Settings(), hsRoot); }
+                    finally { launching = false; }
+                    if (lastRoom == null || !RoomTransitions.Matches(lastRoom, hsTarget))
+                        throw new Exception("Switch with a human in the server did not reach the target map");
+                    File.WriteAllText(Path.Combine(dataDir, "human-switch-smoke.txt"),
+                        $"PASS switched to {lastRoom.Map} while {beforeSwitch.Humans} human(s) were already active; guard no longer reports 0 ready");
+                    hsTool.Close();
                 }
                 if (Environment.GetCommandLineArgs().Contains("--transition-smoke")) await TestRoomTransitions();
                 if (Environment.GetCommandLineArgs().Contains("--official-layout"))

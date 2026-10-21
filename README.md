@@ -1,3 +1,37 @@
+## v0.5.28 人数上限入口改成「看得懂才会用」，换图守卫补上在线取证
+
+用户反馈：「修改人数上限的入口表达还是很不清晰」。上一版虽然把输入框搬进了卡片，但按钮是**常驻且置灰**的，文案也只说「需重启生效」——看起来像一个坏掉的控件。这一版让它只在该出现的时候出现，并且直接说出下一步会发生什么：
+
+- 服务器**没运行**：不显示按钮，只写「下次启动会按 14 人开服；启动后这里显示进程实际拿到的值」。这个数字就是下次启动的 `-maxplayers`，没有什么要重启的。
+- 服务器在运行、**数字与进程一致**：不显示按钮，写「当前服务器进程：14 人，输入框与进程一致，已生效」。
+- 服务器在运行、**数字与进程不同**：按钮才出现，文案是「按 16 人重启服务器」，上方写明「当前进程仍是 14 人。上限是启动参数，只能按 16 人重启服务器才会改变；重启会结束当前对局」。
+- 顺手修了一个真 bug：`RaiseCapacity` 原先拿**保存的偏好**当当前值比较，而界面上显示的是**运行中进程**的值。两者不一致时（改过数字却没重启就会这样），「提高到 16」会被判成「当前上限已是 16，无需重启」而拒绝执行——正是这条路径把用户卡死。现在一律以运行中进程的 `-maxplayers` 为准，改高改低都可以。
+
+换图守卫（v0.5.27 修的 `status` 解析）这次补上了**真人已在服务器内**的在线取证，不再只有离线回归：
+
+```
+PASS switched to de_dust2 while 1 human(s) were already active; guard no longer reports 0 ready
+```
+
+以及守卫与服务端自报人数的一致性（含 `spawning → active` 过渡，确认不是靠等待蒙对的）：
+
+```
+PASS guard agreed with clients_human; trace:
+564ms humans=1 ready=0 [Mikuo:spawning]
+1915ms humans=1 ready=0 [Mikuo:spawning]
+3185ms humans=1 ready=0 [Mikuo:spawning]
+4444ms humans=1 ready=1 [Mikuo:active]
+```
+
+人数上限端到端仍然只认「新进程真的拿到了新参数」，不看界面数字：
+
+```
+PASS ceiling 12 -> 14 reached the new process; dedicated PID 27356 -> 34036;
+     entry point disabled while values matched and enabled while they differed
+```
+
+验收：`ALL 132 CHECKS PASSED`。
+
 ## v0.5.27 修掉换图误判，人数上限有了真正的入口
 
 用户反馈两件事，都是 v0.5.25/26 没解决好的：

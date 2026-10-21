@@ -1,3 +1,48 @@
+# 2026-10-21 v0.5.28 人数上限入口：说清「现在是什么、点了会怎样」
+
+用户反馈：「修改人数上限的入口表达还是很不清晰」。v0.5.27 已经把输入框搬进独立卡片，但控件本身仍在误导。
+
+## 三个误导点
+
+1. **按钮常驻且置灰**。服务器没运行时也显示一个灰掉的「保存并重启服务器」，看起来像坏控件；实际上那种情况下根本没有进程可重启，输入的数字只是下次启动的参数。
+2. **文案没说自己属于哪种状态**。三种完全不同的处境（没运行 / 一致 / 不一致）共用一句「启动后显示实际上限」，用户无法判断该不该动它。
+3. **比较对象错了**（真 bug）。`RaiseCapacity` 用 `Settings().MaxPlayers`（保存的偏好）当当前值，而界面展示的是 `GameProcesses.Find(...).RequestedMaxPlayers`（运行中进程的启动参数）。改过数字但没重启时两者不一致，于是「提高到 16」被判成「当前上限已是 16，无需重启」直接抛异常——入口看着能点，点了永远失败。
+
+## 修法
+
+- 一律以**运行中进程的 `-maxplayers`** 为准，改高改低都允许；只有与进程完全相同才拒绝。
+- 按钮按状态出现，而不是按状态置灰：没进程 / 数字一致 → `Visibility.Collapsed`；数字不同 → 显示，且文案带目标值「按 16 人重启服务器」。
+- 每种状态各写一句能直接行动的话（见 README 的四种状态）。
+
+## 证据
+
+`--capacity-smoke` 现在同时断言入口的**可见性**与**可用性**，并截图 `capacity-entry.png` 复核首屏可读性：
+
+```
+PASS ceiling 12 -> 14 reached the new process; dedicated PID 27356 -> 34036;
+     entry point disabled while values matched and enabled while they differed
+```
+
+断言链：数字与进程一致 → 按钮不 enabled；改成 target → 按钮 enabled 且可见、`CapacityState` 含目标值；执行后 → 按钮再次不可用；最后核对**新进程**的 `-maxplayers` 等于 target，且 PID 已变（证明真的重启了，而不是只改了界面）。
+
+## 换图守卫的在线取证（补 v0.5.27 只做了离线的缺口）
+
+v0.5.27 用真机抓下来的 `status` 块做离线回归。这次趁用户退出游戏，用启动器自己拉起的服务器做了只读与真实换图两种在线验证：
+
+```
+PASS guard agreed with clients_human; trace:
+564ms humans=1 ready=0 [Mikuo:spawning]
+1915ms humans=1 ready=0 [Mikuo:spawning]
+3185ms humans=1 ready=0 [Mikuo:spawning]
+4444ms humans=1 ready=1 [Mikuo:active]
+```
+
+```
+PASS switched to de_dust2 while 1 human(s) were already active; guard no longer reports 0 ready
+```
+
+第二条是用户报的那个场景本身：真人已经站在地图里，仍然能换图。第一条顺带证明了 `spawning` 期间守卫会等待、不会误判，也不会靠固定睡眠蒙对。
+
 # 2026-10-21 v0.5.27 换图守卫误判（真机 status 表结构变化）
 
 用户报告：「我已经进入了地图，切换地图的时候还是显示这个」——弹窗写「玩家仍在连接或加载（已就绪 0/1）」。

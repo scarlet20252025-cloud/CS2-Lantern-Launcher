@@ -76,8 +76,8 @@ public partial class MainWindow
             var typed = int.TryParse(PlayersBox.Text, out var t) && t is >= 2 and <= 64 ? t : (int?)null;
             if (HostBox.SelectedIndex == 0 || root.Length == 0)
             {
-                CapacityState.Text = "本机模式没有独立服务器进程；人数上限由游戏内房间决定，这里只影响独立服务器。";
-                RaiseCapacityButton.IsEnabled = false;
+                CapacityState.Text = "本机边玩边开没有独立服务器进程；人数上限由游戏内房间决定，这里只影响独立服务器。";
+                RaiseCapacityButton.Visibility = Visibility.Collapsed; RaiseCapacityButton.IsEnabled = false;
                 return;
             }
             if ((DateTime.UtcNow - capacityCache.At).TotalSeconds > 2 || capacityCache.Root != root)
@@ -87,23 +87,32 @@ public partial class MainWindow
             }
             if (capacityCache.Cap is not int cap)
             {
-                CapacityState.Text = "服务器未运行。这里的数字会成为下次启动的 -maxplayers；启动后再回来核对。";
-                RaiseCapacityButton.IsEnabled = false;
+                // Nothing to restart: the typed number simply becomes the next launch's
+                // -maxplayers. Showing a disabled restart button here was the confusing part.
+                CapacityState.Text = typed is int will
+                    ? $"服务器未运行。下次启动会按 {will} 人开服；启动后这里显示进程实际拿到的值。"
+                    : "服务器未运行。人数上限需要填 2–64 的整数，下次启动时生效。";
+                RaiseCapacityButton.Visibility = Visibility.Collapsed; RaiseCapacityButton.IsEnabled = false;
                 return;
             }
             if (typed == null)
             {
                 CapacityState.Text = $"当前服务器进程：{cap} 人。人数上限需要填 2–64 的整数。";
-                RaiseCapacityButton.IsEnabled = false;
+                RaiseCapacityButton.Visibility = Visibility.Collapsed; RaiseCapacityButton.IsEnabled = false;
                 return;
             }
-            bool differs = typed != cap;
-            CapacityState.Text = differs
-                ? $"当前进程仍是 {cap} 人；点右侧按钮按 {typed} 人重启后才会生效。"
-                : $"当前进程：{cap} 人，输入框一致。只有改数字并重启才能改变它。";
-            RaiseCapacityButton.IsEnabled = differs;
+            if (typed == cap)
+            {
+                CapacityState.Text = $"当前服务器进程：{cap} 人，输入框与进程一致，已生效。要调整就改上面的数字，右侧会出现重启按钮。";
+                RaiseCapacityButton.Visibility = Visibility.Collapsed; RaiseCapacityButton.IsEnabled = false;
+                return;
+            }
+            CapacityState.Text = $"当前进程仍是 {cap} 人。上限是启动参数，只能按 {typed} 人重启服务器才会改变；重启会结束当前对局。";
+            RaiseCapacityButton.Content = $"按 {typed} 人重启服务器";
+            RaiseCapacityButton.Visibility = Visibility.Visible;
+            RaiseCapacityButton.IsEnabled = !launching;
         }
-        catch { CapacityState.Text = "读取服务器进程上限失败；请确认服务器仍在运行。"; RaiseCapacityButton.IsEnabled = false; }
+        catch { CapacityState.Text = "读取服务器进程上限失败；请确认服务器仍在运行。"; RaiseCapacityButton.Visibility = Visibility.Collapsed; RaiseCapacityButton.IsEnabled = false; }
     }
 
     void CapacityTextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e) => UpdateCapacityState();
@@ -123,9 +132,15 @@ public partial class MainWindow
     async Task RaiseCapacity(int cap)
     {
         if (launching) throw new InvalidOperationException("已有开图或重启操作正在执行。");
-        var current = Settings().MaxPlayers;
-        if (cap <= current) throw new InvalidOperationException($"当前上限已是 {current}，无需重启。");
-        if (!smoke && MessageBox.Show(this, $"人数上限将从 {current} 提高到 {cap}。\n\n这是服务器进程的启动参数，必须重启独立服务器才能生效；当前对局会结束，所有玩家需要重新加入。\n\n游戏客户端不会关闭。", "提高人数上限并重启", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel) != MessageBoxResult.OK)
+        // Compare against the ceiling the running process actually got, not the saved
+        // preference: those drift apart whenever the number is edited without a restart,
+        // and comparing with the saved value made the change impossible to perform.
+        var running = GameProcesses.Find(RootBox.Text.Trim(), true)?.RequestedMaxPlayers;
+        var current = running ?? Settings().MaxPlayers;
+        if (cap == current) throw new InvalidOperationException($"当前上限已是 {current}，无需重启。");
+        var direction = cap > current ? $"从 {current} 提高到 {cap}" : $"从 {current} 降低到 {cap}";
+        var warn = $"人数上限将{direction}。\n\n这是服务器进程的启动参数，必须重启独立服务器才能生效；当前对局会结束，所有玩家需要重新加入。\n\n游戏客户端不会关闭。";
+        if (!smoke && MessageBox.Show(this, warn, "更改人数上限并重启", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel) != MessageBoxResult.OK)
             throw new InvalidOperationException("已取消，未修改任何设置。");
         PlayersBox.Text = cap.ToString();
         Save();
