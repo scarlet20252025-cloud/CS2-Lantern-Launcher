@@ -32,14 +32,12 @@ public partial class MainWindow
             RunText.Text = "网页控制台预览：先启动独立服务器…";
             await LaunchSelected();
         }
-        prefs.WebPort = port;
-        prefs.WebEnabled = true;
-        webToken = "";
+        smokeWebPort = port;
         StartWebConsole();
         if (web == null) throw new Exception("Web console did not start: " + WebState.Text);
         var urls = WebUrls(port).ToList();
         File.WriteAllText(Path.Combine(dataDir, "web-hold.txt"),
-            "port=" + port + "\ntoken=" + webToken + "\n" + string.Join("\n", urls) + "\n");
+            "port=" + port + "\n" + string.Join("\n", urls) + "\n");
         // A browser needs the URL, not the loopback alias, but the loopback one
         // is what a same-machine screenshot can use.
         await Task.Delay(TimeSpan.FromSeconds(seconds));
@@ -50,6 +48,89 @@ public partial class MainWindow
     {
         using var document = JsonDocument.Parse(await client.GetStringAsync("api/state"));
         return document.RootElement.Clone();
+    }
+
+    // The whole point of v0.5.35: a friend who opens the page with nothing
+    // running can start a server, and clicking a map starts it on that map.
+    // This has to begin with no server at all, so it refuses to run otherwise
+    // rather than passing on a server someone else started.
+    async Task TestWebLifecycle()
+    {
+        var evidence = new List<string>();
+        if (HostBox.SelectedIndex == 0) HostBox.SelectedIndex = 2;
+        var root = RootBox.Text.Trim();
+        if (await Task.Run(() => GameProcesses.Find(root, true)) != null)
+            throw new Exception("Lifecycle smoke needs no server running, but one already is. Close it and rerun.");
+
+        int free;
+        var scout = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        scout.Start(); free = ((System.Net.IPEndPoint)scout.LocalEndpoint).Port; scout.Stop();
+        smokeWebPort = free;
+        StartWebConsole();
+        if (web == null) throw new Exception("Web console did not start: " + WebState.Text);
+        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{web.Port}/"), Timeout = TimeSpan.FromSeconds(180) };
+
+        var idle = await ReadState(client);
+        if (idle.GetProperty("server").GetProperty("running").GetBoolean())
+            throw new Exception("State reported a running server before anything was started");
+        evidence.Add("PASS page says nothing is running before a start");
+
+        // Start through the map card, which is what a friend actually clicks.
+        var mapsJson = idle.GetProperty("maps");
+        var target = mapsJson.EnumerateArray().First(m => m.GetProperty("official").GetBoolean());
+        var identity = target.GetProperty("identity").GetString()!;
+        var mapName = target.GetProperty("mapName").GetString()!;
+        var started = await client.PostAsync("api/map",
+            new StringContent($"{{\"identity\":\"{identity}\"}}", Encoding.UTF8, "application/json"));
+        using var startedJson = JsonDocument.Parse(await started.Content.ReadAsStringAsync());
+        if (!startedJson.RootElement.GetProperty("ok").GetBoolean())
+            throw new Exception("Map click did not start a server: " + startedJson.RootElement);
+        evidence.Add($"PASS map click started a server on {mapName}");
+
+        // The claim is only true if the server itself reports that map.
+        string? live = null;
+        var deadline = DateTime.UtcNow.AddSeconds(150);
+        while (DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(2000);
+            var state = await ReadState(client);
+            var server = state.GetProperty("server");
+            // busy must clear too: the launch reports the map before it returns,
+            // and a restart sent in that window is refused.
+            if (!state.GetProperty("busy").GetBoolean()
+                && server.GetProperty("running").GetBoolean() && server.GetProperty("map").GetString() == mapName)
+            { live = server.GetProperty("map").GetString(); break; }
+        }
+        if (live != mapName) throw new Exception($"Server never reported {mapName} after the map click");
+        evidence.Add($"PASS the server came up on {live}, confirmed by its own status");
+
+        var runningState = await ReadState(client);
+        if (!runningState.GetProperty("server").GetProperty("running").GetBoolean())
+            throw new Exception("Server reported running, then not running");
+
+        // Restart the thing we just started.
+        var restart = await client.PostAsync("api/server", new StringContent("{\"action\":\"restart\"}", Encoding.UTF8, "application/json"));
+        using var restartJson = JsonDocument.Parse(await restart.Content.ReadAsStringAsync());
+        if (!restartJson.RootElement.GetProperty("ok").GetBoolean())
+            throw new Exception("Restart was refused: " + restartJson.RootElement);
+        evidence.Add("PASS restart accepted while the server was running");
+
+        string? afterRestart = null;
+        deadline = DateTime.UtcNow.AddSeconds(150);
+        while (DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(2000);
+            var state = await ReadState(client);
+            var server = state.GetProperty("server");
+            if (!state.GetProperty("busy").GetBoolean()
+                && server.GetProperty("running").GetBoolean() && server.GetProperty("map").GetString() == mapName)
+            { afterRestart = server.GetProperty("map").GetString(); break; }
+        }
+        if (afterRestart != mapName) throw new Exception("Server did not come back on its map after the restart");
+        evidence.Add($"PASS restarted server back on {afterRestart}");
+
+        File.WriteAllText(Path.Combine(dataDir, "web-lifecycle-smoke.txt"), string.Join("\n", evidence));
+        StopWebConsole();
     }
 
     async Task TestWebConsole()
@@ -69,9 +150,7 @@ public partial class MainWindow
         scout.Start();
         free = ((System.Net.IPEndPoint)scout.LocalEndpoint).Port;
         scout.Stop();
-        prefs.WebPort = free;
-        prefs.WebEnabled = true;
-        webToken = "";
+        smokeWebPort = free;
         StartWebConsole();
         if (web == null) throw new Exception("Web console did not start: " + WebState.Text);
         var port = web.Port;
@@ -83,23 +162,17 @@ public partial class MainWindow
         if (!page.IsSuccessStatusCode || !html.Contains("L A N T E R N")) throw new Exception("Page did not render: " + (int)page.StatusCode);
         evidence.Add($"PASS page served at http://127.0.0.1:{port}/ ({html.Length} bytes, no external requests)");
 
-        // 2. A wrong token must not open anything, and must not be a timing oracle.
-        var bad = await client.PostAsync("api/login", new StringContent("{\"token\":\"nope\"}", Encoding.UTF8, "application/json"));
-        if (await bad.Content.ReadAsStringAsync() is var badBody && badBody.Contains("\"ok\":true")) throw new Exception("Wrong token was accepted");
-        var anonymous = await client.GetAsync("api/state");
-        var anonymousBody = await anonymous.Content.ReadAsStringAsync();
-        if (anonymousBody.Contains("\"auth\":false") == false) throw new Exception("State was served without a token: " + anonymousBody);
-        evidence.Add("PASS wrong token rejected; unauthenticated state read refused with auth:false");
-
-        // 3. The real token sets a cookie, and the cookie is what later requests use.
-        var login = await client.PostAsync("api/login", new StringContent($"{{\"token\":\"{webToken}\"}}", Encoding.UTF8, "application/json"));
-        var loginBody = await login.Content.ReadAsStringAsync();
-        if (!loginBody.Contains("\"ok\":true")) throw new Exception("Correct token rejected: " + loginBody);
-        var setCookie = login.Headers.TryGetValues("Set-Cookie", out var cookies) ? cookies.FirstOrDefault() : null;
-        if (setCookie == null || !setCookie.StartsWith("lantern=", StringComparison.Ordinal)) throw new Exception("Login did not set a cookie");
-        if (!setCookie.Contains("HttpOnly", StringComparison.OrdinalIgnoreCase)) throw new Exception("Session cookie is readable by script");
-        client.DefaultRequestHeaders.Add("Cookie", setCookie.Split(';')[0]);
-        evidence.Add("PASS login set an HttpOnly session cookie");
+        // 2. No password any more: state must answer on a plain request. There is
+        //    no login route left to try, so asking for one must 404 rather than
+        //    quietly succeed.
+        var fresh = await client.GetAsync("api/state");
+        var freshBody = await fresh.Content.ReadAsStringAsync();
+        if (!freshBody.Contains("\"ok\":true")) throw new Exception("State was refused on a plain request: " + freshBody);
+        if (freshBody.Contains("\"auth\":false")) throw new Exception("State still advertises an auth gate: " + freshBody);
+        evidence.Add("PASS state served without any password");
+        var login = await client.PostAsync("api/login", new StringContent("{}", Encoding.UTF8, "application/json"));
+        if (login.IsSuccessStatusCode) throw new Exception("A login route still exists");
+        evidence.Add("PASS no login route remains");
 
         // 4. State must describe the real server, not a hopeful default.
         var state = JsonDocument.Parse(await client.GetStringAsync("api/state"));
@@ -222,13 +295,32 @@ public partial class MainWindow
         if (!swapBody.Contains(QuickCommands.SwapTeams)) throw new Exception("Quick action did not report the command it sent: " + swapBody);
         evidence.Add("PASS quick action swap reached the engine: " + QuickCommands.SwapTeams);
 
+        // 6c. Start and restart exist, but only one applies at a time: starting an
+        // already-running server is refused rather than spawning a second one,
+        // and an unknown action is refused outright.
+        var dup = await client.PostAsync("api/server", new StringContent("{\"action\":\"start\"}", Encoding.UTF8, "application/json"));
+        // Chinese comes back \u-escaped, so compare the decoded message.
+        using var dupJson = JsonDocument.Parse(await dup.Content.ReadAsStringAsync());
+        var dupOk = dupJson.RootElement.GetProperty("ok").GetBoolean();
+        var dupError = dupJson.RootElement.TryGetProperty("error", out var dupErr) ? dupErr.GetString() ?? "" : "";
+        if (dupOk) throw new Exception("Start was accepted while the server was already running");
+        if (!dupError.Contains("已经在运行")) throw new Exception("Start refused without saying why: " + dupError);
+        evidence.Add("PASS starting an already-running server is refused: " + dupError);
+
+        var bogusServer = await client.PostAsync("api/server", new StringContent("{\"action\":\"kill\"}", Encoding.UTF8, "application/json"));
+        using var bogusServerJson = JsonDocument.Parse(await bogusServer.Content.ReadAsStringAsync());
+        if (bogusServerJson.RootElement.GetProperty("ok").GetBoolean())
+            throw new Exception("Unknown server action was accepted");
+        var bogusServerError = bogusServerJson.RootElement.TryGetProperty("error", out var bsErr) ? bsErr.GetString() ?? "" : "";
+        evidence.Add("PASS unknown server action refused: " + bogusServerError);
+
         // 7. Nothing in the page can stop the server.
-        foreach (var forbidden in new[] { "/api/stop", "/api/start", "/api/restart", "/api/shutdown" })
+        foreach (var forbidden in new[] { "/api/stop", "/api/shutdown" })
         {
             var probe = await client.PostAsync(forbidden.TrimStart('/'), new StringContent("{}", Encoding.UTF8, "application/json"));
             if (probe.IsSuccessStatusCode) throw new Exception($"{forbidden} answered {probe.StatusCode}; the web console must not control the server lifecycle");
         }
-        evidence.Add("PASS no server start/stop/restart route exists");
+        evidence.Add("PASS no stop or shutdown route exists; starting and restarting are allowed");
 
         // 8. A request line the parser cannot trust must not be guessed at.
         if (MiniHttp.TryRequestLine("GET", out _, out _, out _)) throw new Exception("Truncated request line was accepted");

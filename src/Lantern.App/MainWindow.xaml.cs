@@ -22,9 +22,11 @@ public sealed class Preferences
     // starts a map, so it must not depend on the host remembering a checkbox.
     public bool WebEnabled { get; set; } = true;
     public int WebPort { get; set; } = 8787;
-    public string WebToken { get; set; } = "";
     public string SelectedIdentity { get; set; } = "";
     public string Root { get; set; } = "";
+    // The address friends use, kept here so the page does not go blank whenever
+    // the launcher restarts and the 好友联机 box has not been filled yet.
+    public string JoinAddress { get; set; } = "";
     public string Extra { get; set; } = "";
     public List<MapEntry> Imported { get; set; } = new();
     public Dictionary<string, WorkshopItem> Metadata { get; set; } = new();
@@ -91,7 +93,7 @@ public partial class MainWindow : Window
             AutoRefreshCheck.IsChecked = prefs.AutoRefresh;
             WebCheck.IsChecked = prefs.WebEnabled;
             WebPortBox.Text = prefs.WebPort.ToString();
-            webToken = prefs.WebToken;
+            JoinAddressBox.Text = prefs.JoinAddress;
             if (prefs.WebEnabled) { WebPanel.Visibility = Visibility.Visible; StartWebConsole(); }
             if (!smoke) { mapTimer.Start(); roomTimer.Start(); }
             if (smoke)
@@ -319,6 +321,7 @@ public partial class MainWindow : Window
                     StopWebConsole();
                 }
                 if (Environment.GetCommandLineArgs().Contains("--web-smoke")) await TestWebConsole();
+                if (Environment.GetCommandLineArgs().Contains("--web-lifecycle-smoke")) await TestWebLifecycle();
                 if (Environment.GetCommandLineArgs().Contains("--web-hold"))
                 {
                     WebSection.IsExpanded = true;
@@ -520,7 +523,7 @@ public partial class MainWindow : Window
     void Save()
     {
         prefs.SelectedIdentity = (MapList.SelectedItem as MapEntry)?.Identity ?? prefs.SelectedIdentity;
-        prefs.Root = RootBox.Text.Trim(); prefs.Extra = ExtraBox.Text;
+        prefs.Root = RootBox.Text.Trim(); prefs.JoinAddress = JoinAddressBox.Text.Trim(); prefs.Extra = ExtraBox.Text;
         try { prefs.Settings = Settings() with { Token = "", ConsolePassword = "" }; } catch (ArgumentException) { }
         var file = Path.Combine(dataDir, "preferences.json");
         File.WriteAllText(file + ".tmp", JsonSerializer.Serialize(prefs, new JsonSerializerOptions { WriteIndented = true })); File.Move(file + ".tmp", file, true);
@@ -733,7 +736,10 @@ public partial class MainWindow : Window
         };
     }
     void ModeChanged(object sender, SelectionChangedEventArgs e) { if (ready && ModeBox.SelectedIndex == 0) RulesCheck.IsChecked = false; }
-    MapEntry Selected() => MapList.SelectedItem as MapEntry ?? throw new ArgumentException("请先选择地图。");
+    // A launch target that did not come from the list (the web console asks for
+    // a map that may be filtered out). Null means "use the current selection".
+    MapEntry? launchTarget;
+    MapEntry Selected() => launchTarget ?? MapList.SelectedItem as MapEntry ?? throw new ArgumentException("请先选择地图。");
     LaunchPlan Plan() => Hosting.Build(Selected(), Settings(), DateTime.UtcNow.ToString("yyyyMMdd_HHmmss_fff"));
     void PreviewClick(object sender, RoutedEventArgs e)
     {

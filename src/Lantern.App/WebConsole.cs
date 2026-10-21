@@ -23,8 +23,10 @@ public partial class MainWindow
 {
     const int DefaultWebPort = 8787;
     MiniHttp? web;
-    string webToken = "";
     int webBusy;
+    // A smoke run must not move the operator's saved port; it overrides for this
+    // process only. Writing prefs.WebPort from a test is how the port drifted.
+    int? smokeWebPort;
 
     // One log ring shared by every viewer: draining it per request would mean
     // the second person to open the page sees nothing the first one already read.
@@ -39,13 +41,7 @@ public partial class MainWindow
     void StartWebConsole()
     {
         StopWebConsole();
-        if (webToken.Length < 8)
-        {
-            webToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(5)).ToLowerInvariant();
-            prefs.WebToken = webToken;
-            Save();
-        }
-        int port = prefs.WebPort is >= 1024 and <= 65535 ? prefs.WebPort : DefaultWebPort;
+        int port = smokeWebPort ?? (prefs.WebPort is >= 1024 and <= 65535 ? prefs.WebPort : DefaultWebPort);
         try
         {
             web = new MiniHttp(port, Handle);
@@ -60,7 +56,6 @@ public partial class MainWindow
             web = null;
             WebState.Text = $"网页控制台未启动：{ex.Message}（端口 {port} 可能已被占用；换一个端口再试。）";
         }
-        WebTokenText.Text = webToken;
         UpdateWebAddresses();
     }
 
@@ -114,9 +109,16 @@ public partial class MainWindow
             .Distinct()
             .ToList();
 
+    void JoinAddressChanged(object sender, RoutedEventArgs e)
+    {
+        prefs.JoinAddress = JoinAddressBox.Text.Trim();
+        Save();
+        Status("加入地址已保存：" + (prefs.JoinAddress.Length > 0 ? prefs.JoinAddress : "未填（网页改用局域网地址）"));
+    }
+
     void UpdateWebAddresses()
     {
-        var port = web?.Port ?? (prefs.WebPort is >= 1024 and <= 65535 ? prefs.WebPort : DefaultWebPort);
+        var port = web?.Port ?? smokeWebPort ?? (prefs.WebPort is >= 1024 and <= 65535 ? prefs.WebPort : DefaultWebPort);
         var urls = LanAddresses().Select(a => $"http://{a}:{port}/").ToList();
         WebAddressBox.ItemsSource = urls;
         WebAddressBox.SelectedIndex = urls.Count > 0 ? 0 : -1;
@@ -135,7 +137,7 @@ public partial class MainWindow
             WebCheckClick(WebCheck, e);
         }
         else if (web == null) StartWebConsole();
-        Status("网页控制台：" + (web == null ? WebState.Text : string.Join("  ", WebUrls(web.Port)) + "  口令 " + webToken));
+        Status("网页控制台：" + (web == null ? WebState.Text : string.Join("  ", WebUrls(web.Port))));
     }
 
     void OpenWebClick(object sender, RoutedEventArgs e)
@@ -146,10 +148,8 @@ public partial class MainWindow
             // and works even when the machine has no LAN address yet.
             var url = web == null ? "" : $"http://127.0.0.1:{web.Port}/";
             if (string.IsNullOrWhiteSpace(url)) throw new InvalidOperationException("网页控制台未启动。");
-            // The fragment carries the token: never sent to the server, never in a
-            // request log, and the host does not have to retype it.
-            OpenUri(url + "#token=" + webToken);
-            Status("已在浏览器打开 " + url + "（口令随地址一起带过去，不用手输）。发给好友时请用“复制地址和口令”。");
+            OpenUri(url);
+            Status("已在浏览器打开 " + url + "。这个页面不需要口令；发给好友时用“复制地址”。");
         }
         catch (Exception ex) { Error(ex); }
     }
@@ -162,8 +162,8 @@ public partial class MainWindow
             if (string.IsNullOrWhiteSpace(url)) throw new InvalidOperationException("还没有可用地址。");
             if (url.Contains("127.0.0.1") || url.Contains("localhost"))
                 throw new InvalidOperationException("127.0.0.1 只有你自己能打开。请在下拉框里选一个局域网地址再复制。");
-            Clipboard.SetText(url + "  口令：" + webToken);
-            Status("已复制网页地址和口令，发给好友即可。公网访问需要你自己把该端口转发出去。"
+            Clipboard.SetText(url);
+            Status("已复制网页地址，发给好友即可。公网访问需要你自己把该端口转发出去。"
                 + (ProxyWarning(url) is string warn ? " 注意：" + warn : ""));
         }
         catch (Exception ex) { Error(ex); }
@@ -214,16 +214,9 @@ public partial class MainWindow
             if (request.Method == "GET" && request.Path == "/favicon.ico") return HttpResponse.Text("", 404);
             if (!request.Path.StartsWith("/api/", StringComparison.Ordinal)) return HttpResponse.Text("没有这个地址。", 404);
 
-            // Login is the only route reachable without a cookie.
-            if (request.Path == "/api/login" && request.Method == "POST")
-            {
-                if (!SameSecret(ReadToken(request), webToken))
-                    return HttpResponse.Json("{\"ok\":false,\"error\":\"口令不对。\"}");
-                return HttpResponse.Json("{\"ok\":true}").With("Set-Cookie", "lantern=" + webToken + "; Path=/; Max-Age=86400; SameSite=Strict; HttpOnly");
-            }
-
-            if (!SameSecret(CookieToken(request), webToken))
-                return HttpResponse.Json("{\"ok\":false,\"error\":\"需要口令\",\"auth\":false}");
+            // No password: the host asked for a console anyone on the forwarded
+            // address can just open. There is nothing to unlock, so nothing here
+            // pretends to be a gate.
 
             // Images are served outside the JSON switch: they answer with bytes.
             if (request.Path == "/api/cover" && request.Method == "GET") return Cover(request.Param("identity") ?? "");
@@ -235,6 +228,7 @@ public partial class MainWindow
                 ("/api/command", "POST") => HttpResponse.Json(await OnUi(() => CommandFromWeb(request))),
                 ("/api/bots", "POST") => HttpResponse.Json(await OnUi(() => BotsFromWeb(request))),
                 ("/api/quick", "POST") => HttpResponse.Json(await OnUi(() => QuickFromWeb(request))),
+                ("/api/server", "POST") => HttpResponse.Json(await OnUi(() => ServerFromWeb(request))),
                 _ => HttpResponse.Text("没有这个接口。", 404),
             };
         }
@@ -242,37 +236,6 @@ public partial class MainWindow
         {
             return HttpResponse.Json(JsonSerializer.Serialize(new { ok = false, error = ex.Message }));
         }
-    }
-
-    static bool SameSecret(string? supplied, string expected)
-    {
-        if (string.IsNullOrEmpty(supplied) || expected.Length == 0) return false;
-        var a = Encoding.UTF8.GetBytes(supplied);
-        var b = Encoding.UTF8.GetBytes(expected);
-        return a.Length == b.Length && CryptographicOperations.FixedTimeEquals(a, b);
-    }
-
-    static string ReadToken(HttpRequest request)
-    {
-        try
-        {
-            using var json = JsonDocument.Parse(request.Body);
-            return json.RootElement.TryGetProperty("token", out var token) && token.ValueKind == JsonValueKind.String
-                ? (token.GetString() ?? "").Trim() : "";
-        }
-        catch (JsonException) { return ""; }
-    }
-
-    static string? CookieToken(HttpRequest request)
-    {
-        var raw = request.Header("Cookie");
-        if (string.IsNullOrEmpty(raw)) return null;
-        foreach (var part in raw.Split(';'))
-        {
-            var trimmed = part.Trim();
-            if (trimmed.StartsWith("lantern=", StringComparison.Ordinal)) return trimmed["lantern=".Length..];
-        }
-        return null;
     }
 
     /// <summary>
@@ -379,22 +342,33 @@ public partial class MainWindow
     // invent a public address, and say which source it came from.
     object JoinPayload(RoomStatus? room)
     {
-        if (room == null) return new { command = "", source = "", error = "" };
-        var configured = AddressBox.Text.Trim();
+        if (room == null) return new { link = "", command = "", source = "", error = "" };
+        // The saved share address wins: it is the one the host actually forwarded,
+        // and it may carry its own port (frp maps UDP 10003 -> 27016). Falling
+        // back to the game port silently produced a command nobody could use.
+        var saved = (prefs.JoinAddress ?? "").Trim();
+        var configured = saved.Length > 0 ? saved : AddressBox.Text.Trim();
         if (configured.Length == 0)
-            return new { command = "", source = "", error = "" };
+            return new { link = "", command = "", source = "", error = "" };
+        var host = configured;
+        int? explicitPort = null;
+        var colon = configured.LastIndexOf(':');
+        if (colon > 0 && int.TryParse(configured[(colon + 1)..], out var parsed) && parsed is >= 1 and <= 65535)
+        { host = configured[..colon]; explicitPort = parsed; }
         try
         {
+            var url = Hosting.SteamConnectUrl(host, explicitPort ?? room.Port);
             return new
             {
-                command = Hosting.SteamConnectUrl(configured, room.Port),
-                source = "房主在「好友联机」页填写的地址",
+                link = url,
+                command = url,
+                source = saved.Length > 0 ? "启动器里固定的加入地址" : "「好友联机」页填写的地址",
                 error = "",
             };
         }
         catch (ArgumentException ex)
         {
-            return new { command = "", source = "", error = ex.Message };
+            return new { link = "", command = "", source = "", error = ex.Message };
         }
     }
 
@@ -410,18 +384,103 @@ public partial class MainWindow
         try
         {
             if (HostBox.SelectedIndex == 0)
-                throw new InvalidOperationException("房主用的是“本机边玩边开”，这个模式没有可换图的服务器。请房主改用独立服务器。");
+                throw new InvalidOperationException("房主用的是“本机边玩边开”，这个模式没有可换图的独立服务器。请房主改用独立服务器。");
             if (launching || webBusy > 0) throw new InvalidOperationException("服务器正在处理上一次操作，请稍后再试。");
             var map = maps.FirstOrDefault(m => m.Identity == identity) ?? throw new ArgumentException("没有这张地图。");
             if (!map.Local) throw new ArgumentException("这张地图还没下载完。");
             webBusy++;
             try
             {
+                var root = RootBox.Text.Trim(); // read on the UI thread, use in the worker
+                var running = await Task.Run(() => GameProcesses.Find(root, true));
+                if (running == null)
+                {
+                    // Nothing is running yet, so "switch to this map" means "start
+                    // on this map" — the same slow path, answered the same way.
+                    InBackground("启动服务器", () => StartServerOn(map));
+                    return JsonSerializer.Serialize(new { ok = true, map = map.Title, started = true, detail = "已开始启动并加载这张地图。" });
+                }
                 await SwitchExistingRoom(map, Settings(), RootBox.Text.Trim());
                 snapshot = default;
                 return JsonSerializer.Serialize(new { ok = true, map = map.Title });
             }
             finally { webBusy--; }
+        }
+        catch (Exception ex) { return Fail(ex.Message); }
+    }
+
+    // The launcher's launch path reads a target, not an identity, so the page
+    // hands it one directly. Selecting it in the list as well keeps the two
+    // views agreeing about what is pending.
+    async Task StartServerOn(MapEntry map)
+    {
+        var listed = (MapList.ItemsSource as IEnumerable<MapEntry>)?.FirstOrDefault(m => m.Identity == map.Identity);
+        if (listed != null) MapList.SelectedItem = listed;
+        launchTarget = map;
+        try { await LaunchSelected(); }
+        finally { launchTarget = null; }
+        snapshot = default;
+    }
+
+    /// <summary>
+    /// Runs a slow launcher action after the HTTP response has gone out. Both
+    /// starting and restarting verify the map, which can take a minute; MiniHttp
+    /// closes a connection after 20 s, so awaiting here reported a transport
+    /// error for work that was actually progressing.
+    /// </summary>
+    void InBackground(string label, Func<Task> work)
+    {
+        webBusy++;
+        _ = Dispatcher.InvokeAsync(async () =>
+        {
+            try { await work(); WebLog($"[系统] {label}完成。"); }
+            catch (Exception ex) { WebLog($"[系统] {label}未完成：" + ex.Message); }
+            finally { webBusy--; snapshot = default; }
+        });
+    }
+
+    async Task<string> ServerFromWeb(HttpRequest request)
+    {
+        string action;
+        try
+        {
+            using var json = JsonDocument.Parse(request.Body);
+            action = json.RootElement.TryGetProperty("action", out var value) ? value.GetString() ?? "" : "";
+        }
+        catch (JsonException) { return Fail("请求格式不对。"); }
+        try
+        {
+            if (HostBox.SelectedIndex == 0)
+                throw new InvalidOperationException("房主用的是“本机边玩边开”，网页无法启动这种模式。请房主改用独立服务器。");
+            if (launching || webBusy > 0) throw new InvalidOperationException("服务器正在处理上一次操作，请稍后再试。");
+            var root = RootBox.Text.Trim();
+            var running = await Task.Run(() => GameProcesses.Find(root, true)) != null;
+            switch (action)
+            {
+                case "start":
+                    if (running) return Fail("服务器已经在运行。要换图请直接点地图卡片。");
+                    var target = Selected();
+                    InBackground("启动服务器", () => StartServerOn(target));
+                    return JsonSerializer.Serialize(new { ok = true, detail = "已开始启动服务器，正在核验地图；状态会自己刷新。" });
+                case "restart":
+                    if (!running) return Fail("服务器没在运行，直接点地图卡片启动即可。");
+                    // Restart puts back the map people are already on. Launching
+                    // whatever the launcher's list happens to have selected would
+                    // silently move everyone to a different map.
+                    var live = lastRoom;
+                    var same = live == null ? null
+                        : maps.FirstOrDefault(m => m.MapName == live.Map && (m.Official || m.Id == live.Addon))
+                          ?? maps.FirstOrDefault(m => m.MapName == live.Map);
+                    InBackground("重启服务器", async () =>
+                    {
+                        launchTarget = same;
+                        try { await RestartDedicatedServer(); }
+                        finally { launchTarget = null; }
+                    });
+                    return JsonSerializer.Serialize(new { ok = true, detail = "已开始重启服务器，正在核验地图。" });
+                default:
+                    return Fail("不认识的操作。");
+            }
         }
         catch (Exception ex) { return Fail(ex.Message); }
     }

@@ -76,7 +76,7 @@ static class WebPage
   .map .shop{padding:6px 9px;font-size:11.5px;color:#A9C6E8;border-color:#2f4a63}
   .hero{display:flex;gap:12px;align-items:stretch;margin-bottom:9px}
   .hero[hidden]{display:none}
-  #mapsEmpty[hidden],#playersEmpty[hidden],#gate[hidden],#app[hidden]{display:none}
+  #mapsEmpty[hidden],#playersEmpty[hidden],#app[hidden]{display:none}
   .hero .shot{width:126px;flex:0 0 auto;height:71px;border-radius:8px;overflow:hidden;background:#253246;
               display:flex;align-items:center;justify-content:center;color:#7A8CA4;font:11px Consolas,monospace}
   .hero .shot img{width:100%;height:100%;object-fit:cover;display:block}
@@ -111,9 +111,6 @@ static class WebPage
          max-width:min(90vw,560px);opacity:0;pointer-events:none;transition:.2s;z-index:9}
   .toast.show{opacity:1}
   .toast.bad{border-color:#6b3a3a;background:#2b1d1f;color:#FFD0D0}
-  #gate{max-width:420px;margin:12vh auto 0}
-  #gate h1{font-size:18px;margin:0 0 6px}
-  #gate p{color:var(--muted);font-size:12.5px;margin:0 0 16px}
   .foot{color:var(--dim);font-size:11px;margin-top:12px;line-height:1.65}
   .join{background:#12251c;border:1px solid #2d5340;border-radius:10px;padding:10px 12px}
   .join .cmd{font:12.5px/1.5 Consolas,ui-monospace,monospace;color:#C8ECD6;background:#0A121D;
@@ -121,7 +118,12 @@ static class WebPage
              user-select:all;-webkit-user-select:all}
   .join .steps{color:#9FC0AC;font-size:11.5px;margin-top:7px;line-height:1.6}
   .join .steps b{color:var(--accent)}
-  .join .cmdrow{display:flex;gap:8px;align-items:stretch}
+  .join .cmdrow{display:flex;gap:8px;align-items:stretch;margin-bottom:8px}
+  .join .joinbtn{display:flex;align-items:center;justify-content:center;flex:1;
+                 padding:9px 16px;font-size:13.5px;font-weight:600;text-decoration:none;
+                 background:var(--amber);color:#141C25;border:1px solid transparent;border-radius:8px}
+  .join .joinbtn:hover{filter:brightness(1.08)}
+  .join .joinbtn[hidden]{display:none}
   .join .cmdrow .cmd{flex:1;min-width:0;display:flex;align-items:center}
   .join .cmdrow button{flex:0 0 auto;padding:8px 16px}
   .join button.primary{background:#3E6B4F;color:#EAF6EE}
@@ -138,18 +140,14 @@ static class WebPage
     <div class="pill"><span id="dot" class="dot"></span><span id="conn">正在连接…</span></div>
   </header>
 
-  <div id="gate" class="card" hidden>
-    <h1>需要口令</h1>
-    <p>口令在房主启动器的「服务器」页里，一串小写字母和数字。房主重启启动器后口令不变；只有房主手动重置才会换。</p>
-    <div class="row">
-      <input id="token" placeholder="输入口令" autocomplete="off" spellcheck="false">
-      <button class="primary" id="login">进入</button>
-    </div>
-  </div>
-
-  <main id="app" hidden>
+  <main id="app">
     <div class="card">
       <h2>服务器状态 <span class="hint" id="kindHint"></span></h2>
+      <div class="row" id="serverRow" style="margin:0 0 10px">
+        <button class="primary" id="startServer">启动服务器</button>
+        <button class="warn" id="restartServer">重启服务器</button>
+        <span class="note" id="serverHint" style="margin:0"></span>
+      </div>
       <div class="hero" id="hero" hidden>
         <div class="shot" id="heroShot"><img id="heroImg" alt=""></div>
         <div class="meta"><b id="heroTitle">—</b><span id="heroSub"></span></div>
@@ -168,10 +166,11 @@ static class WebPage
       <h2>加入这台服务器 <span class="hint" id="joinHint"></span></h2>
       <div class="join">
         <div class="cmdrow">
-          <div class="cmd" id="joinCmd">服务器开图后这里会出现加入指令。</div>
-          <button class="primary" id="copyJoin">复制</button>
+          <a class="b primary joinbtn" id="joinLink" href="#" hidden>加入服务器</a>
+          <button class="primary" id="copyJoin">复制指令</button>
         </div>
-        <div class="steps">按 <b>Win + R</b> 打开“运行”，<b>粘贴</b>，回车。Steam 会带参数拉起 CS2 直接连进来。</div>
+        <div class="cmd" id="joinCmd">服务器开图后这里会出现加入指令。</div>
+        <div class="steps">点「加入服务器」Steam 会直接带参数拉起 CS2 连进来；浏览器会先问一次是否允许打开 Steam。复制指令后也可以 <b>Win + R</b> 粘贴回车。</div>
         <div class="warnline" id="joinWarn" hidden></div>
       </div>
     </div>
@@ -251,7 +250,7 @@ static class WebPage
     </div>
 
     <div class="foot">
-      这里不能启动或关闭服务器：停服会结束所有人的对局，只有坐在那台电脑前的人能决定。<br>
+      这里可以启动和重启服务器，但没有「关闭」：停服会结束所有人的对局，只有坐在那台电脑前的人能决定。<br>
       换图、加人机、执行命令都会先读服务器真实状态再执行，失败会原样告诉你原因。
     </div>
   </main>
@@ -283,11 +282,6 @@ static class WebPage
     });
   }
 
-  function gate(show){
-    $("gate").hidden = !show;
-    $("app").hidden = show;
-    if (show) { clearInterval(timer); timer = null; }
-  }
 
   function logLine(text, cls){
     var box = $("log");
@@ -326,6 +320,13 @@ static class WebPage
       }
     }
     joinCommand = command;
+    // A plain <a href="steam://…"> is the same mechanism the 订阅 button uses:
+    // the browser asks once, then Steam takes over. No console, no Win+R.
+    var link = $("joinLink");
+    if (join.link){
+      link.href = join.link; link.hidden = false;
+      link.textContent = "加入服务器";
+    } else { link.hidden = true; link.removeAttribute("href"); }
     if (!command){
       box.textContent = "房主还没填对外地址。请在启动器「好友联机」页填上公网 IP 或域名，或让房主把这条指令发给你。";
       hint.textContent = "";
@@ -396,7 +397,7 @@ static class WebPage
       }
       var b = document.createElement("button");
       b.className = "b" + (m.current ? " ghost" : " primary");
-      b.textContent = m.current ? "当前地图" : "换这张";
+      b.textContent = m.current ? "当前地图" : (lastState && lastState.server && lastState.server.running ? "换这张" : "启动并开这张");
       b.disabled = m.current || (lastState && lastState.busy);
       b.onclick = function(){ switchMap(m); };
       act.appendChild(b);
@@ -434,6 +435,17 @@ static class WebPage
     $("sPort").textContent = sv.port || "—";
     $("sCap").textContent = sv.capacity == null ? "未知" : sv.capacity;
     $("kindHint").textContent = sv.running ? ("工坊 " + (sv.addon || "官方地图")) : "";
+
+    // Start only makes sense when nothing runs, restart only when something does.
+    // Both stay visible so the page's capability is obvious before you need it.
+    var canManage = !sv.listen;
+    $("startServer").style.display = canManage ? "" : "none";
+    $("restartServer").style.display = canManage ? "" : "none";
+    $("startServer").disabled = !canManage || sv.running || !!s.busy;
+    $("restartServer").disabled = !canManage || !sv.running || !!s.busy;
+    $("serverHint").textContent = sv.listen
+      ? "房主用的是「本机边玩边开」，网页无法控制这种模式。"
+      : (sv.running ? "点地图卡片可以换图；换图会保留房间。" : "服务器没在运行：点「启动服务器」直接开，或点任意一张地图启动并加载它。");
     $("addrLine").textContent = sv.running
       ? ("服务器身份 " + (sv.identity || "未提供") + " · UDP " + sv.port)
       : "独立服务器尚未加载地图；启动器里开图后这里会自动出现。";
@@ -490,9 +502,7 @@ static class WebPage
 
   function tick(){
     api("/api/state?since=" + seq).then(function(s){
-      if (s.auth === false) { gate(true); return; }
       if (!s.ok) { toast(s.error || "读取失败", true); return; }
-      gate(false);
       render(s);
       if (!timer) timer = setInterval(tick, 3000);
     }).catch(function(){
@@ -512,17 +522,6 @@ static class WebPage
     }).catch(function(e){ toast("请求失败：" + e.message, true); });
   }
 
-  $("login").onclick = function(){
-    var token = $("token").value.trim();
-    if (!token) return;
-    api("/api/login", { token: token }).then(function(r){
-      if (!r.ok) { toast(r.error || "口令不对", true); return; }
-      document.cookie = "lantern=" + token + "; path=/; max-age=86400; samesite=strict";
-      $("token").value = ""; seq = 0; gate(false); tick();
-    }).catch(function(e){ toast("请求失败：" + e.message, true); });
-  };
-  $("token").onkeydown = function(e){ if (e.key === "Enter") $("login").click(); };
-
   document.querySelectorAll("[data-quick]").forEach(function(el){
     el.onclick = function(){ quick(el.getAttribute("data-quick")); };
   });
@@ -535,6 +534,17 @@ static class WebPage
       else toast(r.error, true);
     }).catch(function(e){ busy(false); toast("请求失败：" + e.message, true); });
   }
+
+  function serverAction(action){
+    busy(true);
+    return api("/api/server", { action: action }).then(function(r){
+      busy(false);
+      if (r.ok) { toast(r.detail || "已执行"); setTimeout(tick, 800); }
+      else toast(r.error, true);
+    }).catch(function(e){ busy(false); toast("请求失败：" + e.message, true); });
+  }
+  $("startServer").onclick = function(){ serverAction("start"); };
+  $("restartServer").onclick = function(){ serverAction("restart"); };
 
   $("copyJoin").onclick = copyJoin;
   $("send").onclick = send;
@@ -555,21 +565,6 @@ static class WebPage
       }).catch(function(e){ busy(false); toast("请求失败：" + e.message, true); });
     };
   });
-
-  // The launcher can hand the token over in the fragment, which the browser
-  // never sends to the server. Cleared from the address bar immediately so it
-  // does not linger in history or a screenshot.
-  (function(){
-    var m = /(?:^#|&)token=([^&]+)/.exec(location.hash || "");
-    if (!m) return;
-    var token = decodeURIComponent(m[1]);
-    history.replaceState(null, "", location.pathname);
-    api("/api/login", { token: token }).then(function(r){
-      if (!r.ok) { gate(true); return; }
-      document.cookie = "lantern=" + token + "; path=/; max-age=86400; samesite=strict";
-      seq = 0; gate(false); tick();
-    }).catch(function(){ gate(true); });
-  })();
 
   tick();
 })();
