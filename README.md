@@ -45,7 +45,29 @@ PASS ceiling 12 -> 14 reached the new process; dedicated PID 27356 -> 34036;
 
 # CS2 Lantern
 
-Windows 原生 CS2 好友开服启动器。以**独立服务器（本地私服）为主方案**，提供工坊地图收藏室、搜索、Steam 链接导入、房间规则和加入命令。基于 C# / .NET 10 / WPF，无浏览器运行时、Web 服务、数据库或第三方 NuGet 依赖。
+Windows 原生 CS2 好友开服启动器。以**独立服务器（本地私服）为主方案**，提供工坊地图收藏室、搜索、Steam 链接导入、房间规则和加入命令。基于 C# / .NET 10 / WPF，无 Electron、无数据库、无第三方 NuGet 依赖。自 v0.5.29 起附带一个可选的**网页控制台**（`TcpListener` + 手写 HTTP，普通用户权限即可监听，不装任何 Web 框架）。
+
+## v0.5.29 网页控制台（给别人用，不给自己找麻烦）
+
+房主开服后可以让别人用浏览器进来看房间、换地图、管人机、执行命令，对方什么都不用装。房主自己用 frp 把端口转出去，启动器只负责报内网地址。
+
+- **刻意不能启停服务器**。停服会结束所有人的对局，这个决定只属于坐在那台电脑前的人；`/api/stop`、`/api/start` 之类的路由根本不存在，冒烟测试会逐个请求并断言拿不到成功响应。
+- **有口令**。10 位十六进制，保存在 `preferences.json`，重启启动器不变；cookie 是 `HttpOnly; SameSite=Strict`。启动器点「打开网页」时把口令放在 URL 片段里带过去（片段不发给服务器、不进日志），页面读完立刻从地址栏清掉。
+- **不用管理员权限**。`HttpListener` 绑非 localhost 地址要 URL ACL 保留，等于首次运行要提权；这里用裸 `TcpListener`，代价是请求行和查询串的解析要自己写——所以那部分有 15 项离线测试，外加一次真 socket 往返。
+- 页面零外部请求：没有 CDN、没有字体下载、没有构建步骤，整页就是一个 HTML 字符串。
+
+实测（`--smoke --web-smoke`，真服务器 + 真 socket）：
+
+```
+PASS web map switch seek_summervillage_rp -> de_inferno confirmed by the server's own status
+PASS command reached the engine and its reply came back: webecho5cd73a57
+PASS no server start/stop/restart route exists
+PASS 15 requests served over a real TCP socket on port 57338
+```
+
+换图这条特意不认接口自己的 `ok:true`：必须等服务器 `status` 报出的地图名真的变了才算通过。命令回执也一样——启动器发命令时会先记一行 `> echo …`，断言要求回来的那行不以 `> ` 开头，否则证明的只是自己发出去了。
+
+未验收：公网转发后的真实访问、多人同时观看、手机浏览器排版。
 
 ## v0.5.26 加入指令改为 steam://run
 

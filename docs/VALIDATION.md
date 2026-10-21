@@ -297,3 +297,66 @@ CS2 1.41.7.8 移除了 `-netconport`，原有的终端、换图、人数与人�
 - 本机边玩边开（Listen）模式**不再提供终端**：Steam `-applaunch` 起的客户端不提供 stdout，管道能连但读不到回显，任何"执行并核验"都会假成功。该模式的相关入口改为明确说明；换图与人数管理请用独立服务器。
 - 关闭启动器现在会先正常停服（发 `quit`，超时才只结束该进程），并新增托盘图标与「最小化到托盘 / 直接退出」可选。此前关窗会退到后台却无托盘图标。
 - 未验收：好友端跨网络实际可达性与对局内实际体验；本次只验证传输层与管理命令。
+
+---
+
+# 2026-10-21 v0.5.29 网页控制台
+
+目标：让别人用浏览器看房间、换地图、管人机、执行命令，不用装启动器。房主自己用 frp 转发端口，启动器只报内网地址。
+
+## 为什么不用 HttpListener
+
+`HttpListener` 绑定非 localhost 地址需要 URL ACL 保留，等于首次运行要管理员权限。改用裸 `TcpListener`，普通用户就能监听局域网端口。代价是 HTTP 的请求行、查询串、响应头都要自己写，所以这些解析单独测过（见下）。
+
+## 功能边界（刻意不做的事）
+
+- **不能启动、停止、重启服务器**。停服会结束所有人的对局，这个决定只属于坐在那台电脑前的人。`/api/stop`、`/api/start`、`/api/restart`、`/api/shutdown` 都不存在，冒烟测试逐个 POST 断言它们返回非成功。
+- 换图、加/清人机、补位、重开、执行任意控制台命令：这些房主在终端窗口本来就能做，网页只是换个入口。
+
+## 鉴权
+
+- 口令 10 位十六进制，由 `RandomNumberGenerator` 生成，保存在 `preferences.json`（`WebToken`），重启启动器不变。
+- 比对用 `CryptographicOperations.FixedTimeEquals`，长度不等直接拒绝。
+- 登录成功种 `HttpOnly; SameSite=Strict` 的 cookie；`/api/login` 是唯一免 cookie 的接口。
+- 启动器的「打开网页」把口令放在 URL **片段**里（`#token=…`）。片段不会发给服务器，不会进请求日志或代理，页面读到后立刻 `history.replaceState` 清掉，再走一次 `/api/login`。
+
+## 已实测（`--smoke --web-smoke`，真服务器 + 真 socket + 真浏览器形状的请求）
+
+```
+PASS page served at http://127.0.0.1:57338/ (15636 bytes, no external requests)
+PASS wrong token rejected; unauthenticated state read refused with auth:false
+PASS login set an HttpOnly session cookie
+PASS state read: running=True, map='seek_summervillage_rp', humans=0, maps=61, capacity=16
+PASS unknown map refused with an explanation: 没有这张地图。
+PASS web map switch seek_summervillage_rp -> de_inferno confirmed by the server's own status
+PASS command reached the engine and its reply came back: webecho5cd73a57
+PASS no server start/stop/restart route exists
+PASS request line parsing rejects junk and splits query strings
+PASS 15 requests served over a real TCP socket on port 57338
+```
+
+两条断言值得单独说明，因为它们各自堵住了一类假成功：
+
+- **换图不认接口自己的回答**。`/api/map` 返回 `ok:true` 之后，测试继续轮询 `/api/state`，直到服务器 `status` 报出的地图名真的变成目标地图才算通过。接口说成功而引擎没换图，会被判失败。
+- **命令回执必须来自引擎**。启动器发命令时会先记一行 `> echo …`，所以「日志里出现了标记」并不能证明命令到了服务器。断言要求那一行**不以 `> ` 开头**，即真的是引擎回来的输出。
+
+## 离线测试（147 项，新增 15 项）
+
+- 请求行：正常解析、截断拒绝、相对目标拒绝、非字母方法拒绝。
+- 查询串：解码 `%E4%B8%AD%E6%96%87`、无值键保留、空串与 `&&` 返回零项。
+- 端口：`80`（特权）与 `70000`（越界）构造即拒。
+- 真 socket 往返：页面 200 + `text/html` + `Cache-Control: no-store`；查询参数到达处理函数；按方法+路径计数正确。
+- 端口被占用时 `Start()` 抛 `InvalidOperationException` 且消息含「无法监听」，不是裸露的 `SocketException 10048`。
+
+## 界面
+
+- 启动器顶栏新增「网页控制台」按钮（与「好友联机」「游戏终端」并列），点了会切到「服务器」页并把该区滚进视野。
+- 该区：启用开关、端口（1024–65535，失焦生效）、内网地址下拉、打开网页 / 复制地址和口令、口令明文显示、状态行。
+- 网页本身零外部请求：没有 CDN、没有字体下载、没有构建步骤，一个 HTML 字符串。好友在转发端口后面打开时，每个额外请求都是多一个失败点。
+- 截图：`%LOCALAPPDATA%\CS2Lantern\web-console3.png`（网页，1100×1000）、`web-layout.png`（启动器该区，1320×940）。
+
+## 未验收
+
+- 公网转发后的真实访问（房主自己配 frp，本轮只在内网地址上验证）。
+- 多人同时打开页面时的实际观感；状态读取做了 2 秒复用，避免每个观看者都去问一次服务器，但没有做过并发压力测试。
+- 手机浏览器的实际排版（响应式栅格是写了，没有真机截图）。

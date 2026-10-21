@@ -73,6 +73,10 @@ public partial class TerminalWindow : Window
         finally { if (!closed) RepairButton.IsEnabled = true; }
     }
     public bool IsConnected => connection?.IsReady == true;
+    /// <summary>The live console, for callers that need more than a status read.</summary>
+    public GameConsole? Connection => connection;
+    /// <summary>Every display line, for observers outside this window (the web console).</summary>
+    public Action<string>? LogTap { get; set; }
     public async Task<RoomStatus> GetRoomStatus() { await ConnectGame(); return await connection!.ReadStatus(); }
     public async Task<int> GetActiveHumans() { await ConnectGame(); return await connection!.ReadActiveHumans(); }
     public async Task<List<PlayerRow>> GetPlayers() { await ConnectGame(); return await connection!.ReadPlayers(); }
@@ -93,6 +97,9 @@ public partial class TerminalWindow : Window
     void Log(string text)
     {
         if (closed) return;
+        // Every line the operator sees is also offered to observers (the web
+        // console). One tap point, so a line can never be shown twice.
+        LogTap?.Invoke(text);
         lock (diagnosticLock)
         {
             diagnosticTail += text;

@@ -382,6 +382,68 @@ try
     Check(!RoomTransitions.SameEndpoint(roomBefore with { Identity = "[A:1:0:0]" }, roomBefore with { Identity = "[A:1:0:0]" }), "invalid Steam identity cannot prove endpoint continuity");
     Check(RoomTransitions.ConsoleCommands(switchPlan.Boot).Contains("changelevel ") && !RoomTransitions.ConsoleCommands(switchPlan.Boot).Contains("exec "), "live switching bypasses restricted workshop cfg execution");
     Check(RoomTransitions.ConsoleCommands("// generated\r\nsv_lan 0\r\n\r\necho OK\n") == "sv_lan 0; echo OK", "generated config becomes one valid console command without comments or newlines");
+    // --- LAN console transport -------------------------------------------------
+    // The web console binds a raw socket instead of using HttpListener (which
+    // needs an elevated URL ACL for anything but localhost), so the request line
+    // and query parsing are ours and must be proven, not assumed.
+    Check(MiniHttp.TryRequestLine("GET /api/state?since=7 HTTP/1.1", out var webMethod, out var webPath, out var webQuery)
+        && webMethod == "GET" && webPath == "/api/state" && MiniHttp.ParseQuery(webQuery)["since"] == "7",
+        "request line splits method, path and query");
+    Check(!MiniHttp.TryRequestLine("GET", out _, out _, out _), "truncated request line is rejected");
+    Check(!MiniHttp.TryRequestLine("GET relative HTTP/1.1", out _, out _, out _), "request target must be absolute");
+    Check(!MiniHttp.TryRequestLine("123 / HTTP/1.1", out _, out _, out _), "method must be alphabetic");
+    var webParams = MiniHttp.ParseQuery("a=1&b=%E4%B8%AD%E6%96%87&flag&empty=");
+    Check(webParams["a"] == "1" && webParams["b"] == "中文" && webParams.ContainsKey("flag") && webParams["empty"] == "",
+        "query values are decoded and valueless keys survive");
+    Check(MiniHttp.ParseQuery("").Count == 0 && MiniHttp.ParseQuery("&&").Count == 0, "empty query yields no parameters");
+    Reject(() => new MiniHttp(80, _ => Task.FromResult(HttpResponse.Text("x"))), "privileged web port is refused");
+    Reject(() => new MiniHttp(70000, _ => Task.FromResult(HttpResponse.Text("x"))), "out-of-range web port is refused");
+
+    // A real round trip over a real socket: the transport, the handler and the
+    // response framing all have to agree for this to come back at all.
+    var webPort = 0;
+    var scout = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+    scout.Start(); webPort = ((System.Net.IPEndPoint)scout.LocalEndpoint).Port; scout.Stop();
+    var served = new List<string>();
+    using (var server = new MiniHttp(webPort, request =>
+    {
+        served.Add(request.Method + " " + request.Path);
+        return Task.FromResult(request.Path == "/api/echo"
+            ? HttpResponse.Json("{\"ok\":true,\"seen\":\"" + (request.Param("since") ?? "") + "\"}")
+            : HttpResponse.Html("<html>lantern</html>"));
+    }))
+    {
+        server.Start();
+        using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        var page = http.GetAsync($"http://127.0.0.1:{webPort}/").GetAwaiter().GetResult();
+        Check(page.StatusCode == System.Net.HttpStatusCode.OK && page.Content.ReadAsStringAsync().GetAwaiter().GetResult().Contains("lantern"),
+            "real socket serves the page with a 200 and a body");
+        Check(page.Content.Headers.ContentType?.MediaType == "text/html", "page is served as HTML");
+        Check(page.Headers.CacheControl?.NoStore == true, "console responses are never cached by a browser");
+        var json = http.GetAsync($"http://127.0.0.1:{webPort}/api/echo?since=42").GetAwaiter().GetResult();
+        Check(json.Content.ReadAsStringAsync().GetAwaiter().GetResult().Contains("\"seen\":\"42\""), "query parameters reach the handler");
+        Check(served.Count == 2 && served.Contains("GET /api/echo"), "both requests reached the handler by method and path");
+        Check(server.Requests == 2, "server counted exactly the requests it answered");
+    }
+    // A port that is already taken must fail loudly at Start, not silently serve nothing.
+    var blocker = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Any, webPort);
+    blocker.Start();
+    try
+    {
+        var clash = new MiniHttp(webPort, _ => Task.FromResult(HttpResponse.Text("x")));
+        try
+        {
+            clash.Start();
+            throw new Exception("FAIL: a taken web port was accepted silently");
+        }
+        catch (InvalidOperationException ex)
+        {
+            Check(ex.Message.Contains("无法监听"), "a taken web port fails with an operator-readable reason");
+        }
+        finally { clash.Dispose(); }
+    }
+    finally { blocker.Stop(); }
+
     Console.WriteLine($"ALL {passed} CHECKS PASSED");
 }
 finally { Directory.Delete(temp, true); }

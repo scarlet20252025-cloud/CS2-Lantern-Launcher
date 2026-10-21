@@ -17,6 +17,10 @@ public sealed class Preferences
     public bool GridView { get; set; } = true;
     // Closing the window may hide to the tray instead of quitting.
     public bool CloseToTray { get; set; } = true;
+    // The LAN console is opt-in: an open port is a decision the host makes.
+    public bool WebEnabled { get; set; }
+    public int WebPort { get; set; } = 8787;
+    public string WebToken { get; set; } = "";
     public string SelectedIdentity { get; set; } = "";
     public string Root { get; set; } = "";
     public string Extra { get; set; } = "";
@@ -83,6 +87,10 @@ public partial class MainWindow : Window
             if (prefs.SelectedIdentity.StartsWith("official:", StringComparison.Ordinal)) FilterBox.SelectedIndex = 3;
             await Scan();
             AutoRefreshCheck.IsChecked = prefs.AutoRefresh;
+            WebCheck.IsChecked = prefs.WebEnabled;
+            WebPortBox.Text = prefs.WebPort.ToString();
+            webToken = prefs.WebToken;
+            if (prefs.WebEnabled) { WebPanel.Visibility = Visibility.Visible; StartWebConsole(); }
             if (!smoke) { mapTimer.Start(); roomTimer.Start(); }
             if (smoke)
             {
@@ -286,6 +294,34 @@ public partial class MainWindow : Window
                     File.WriteAllText(Path.Combine(dataDir, "human-switch-smoke.txt"),
                         $"PASS switched to {lastRoom.Map} while {beforeSwitch.Humans} human(s) were already active; guard no longer reports 0 ready");
                     hsTool.Close();
+                }
+                if (Environment.GetCommandLineArgs().Contains("--web-layout"))
+                {
+                    SettingsTabs.SelectedIndex = 2;
+                    WebCheck.IsChecked = true; WebPanel.Visibility = Visibility.Visible;
+                    StartWebConsole();
+                    await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+                    UpdateLayout();
+                    // Only now does the panel have a position inside its ScrollViewer.
+                    WebPanel.BringIntoView();
+                    await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+                    UpdateLayout();
+                    var frame = new RenderTargetBitmap((int)ActualWidth, (int)ActualHeight, 96, 96, PixelFormats.Pbgra32);
+                    frame.Render(this);
+                    var shot = new PngBitmapEncoder(); shot.Frames.Add(BitmapFrame.Create(frame));
+                    using (var file = File.Create(Path.Combine(dataDir, "web-layout.png"))) shot.Save(file);
+                    File.WriteAllText(Path.Combine(dataDir, "web-layout.txt"),
+                        "PASS rendered 服务器 tab with the web console section; port " + (web?.Port.ToString() ?? "none") +
+                        "; addresses " + string.Join(",", WebUrls(web?.Port ?? 8787)));
+                    StopWebConsole();
+                }
+                if (Environment.GetCommandLineArgs().Contains("--web-smoke")) await TestWebConsole();
+                if (Environment.GetCommandLineArgs().Contains("--web-hold"))
+                {
+                    WebCheck.IsChecked = true; WebPanel.Visibility = Visibility.Visible;
+                    var holdArgs = Environment.GetCommandLineArgs();
+                    int holdPort = holdArgs.Contains("--web-port") ? int.Parse(holdArgs[Array.IndexOf(holdArgs, "--web-port") + 1]) : 8787;
+                    await HoldWebConsole(holdPort, holdArgs.Contains("--web-seconds") ? int.Parse(holdArgs[Array.IndexOf(holdArgs, "--web-seconds") + 1]) : 120);
                 }
                 if (Environment.GetCommandLineArgs().Contains("--transition-smoke")) await TestRoomTransitions();
                 if (Environment.GetCommandLineArgs().Contains("--official-layout"))
@@ -921,6 +957,7 @@ public partial class MainWindow : Window
         terminal = new TerminalWindow(RootBox.Text.Trim(), dedicated) { Owner = this };
         terminal.EnableTerminalRequested = EnableClientTerminal;
         terminal.RaiseCapacityRequested = RaiseCapacity;
+        terminal.LogTap = WebLog;
         terminal.Closed += (_, _) => terminal = null;
         return terminal;
     }
