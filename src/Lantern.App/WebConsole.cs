@@ -373,7 +373,23 @@ public partial class MainWindow
     // invent a public address, and say which source it came from.
     object JoinPayload(RoomStatus? room)
     {
-        if (room == null) return new { link = "", command = "", source = "", error = "" };
+        // Even with nothing running the configured address is known, so the page
+        // never has to guess from location.hostname (which produced the wrong
+        // 26.x address: that is the web host, not the game port).
+        if (room == null)
+        {
+            var only = joinAddress.Trim();
+            if (only.Length == 0) return new { link = "", command = "", source = "", error = "" };
+            var split = only.LastIndexOf(':');
+            if (split <= 0 || !int.TryParse(only[(split + 1)..], out var explicitOnly))
+                return new { link = "", command = "", source = "", error = "加入地址缺少端口，填写 host:port 才能在网页上直接加入。" };
+            try
+            {
+                var url = Hosting.SteamConnectUrl(only[..split], explicitOnly);
+                return new { link = url, command = url, source = "启动器里固定的加入地址", error = "" };
+            }
+            catch (ArgumentException ex) { return new { link = "", command = "", source = "", error = ex.Message }; }
+        }
         // The saved share address wins: it is the one the host actually forwarded,
         // and it may carry its own port (frp maps UDP 10003 -> 27016). Falling
         // back to the game port silently produced a command nobody could use.
