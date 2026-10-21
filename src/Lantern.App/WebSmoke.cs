@@ -22,6 +22,16 @@ public partial class MainWindow
     /// </summary>
     async Task HoldWebConsole(int port, int seconds)
     {
+        // A room screenshot needs a room: without one the hero frame and the
+        // player table have nothing to draw, and the picture would prove nothing
+        // about how they look in use.
+        if (HostBox.SelectedIndex == 0) HostBox.SelectedIndex = 2;
+        var holdRoot = RootBox.Text.Trim();
+        if (await Task.Run(() => GameProcesses.Find(holdRoot, true)) == null)
+        {
+            RunText.Text = "网页控制台预览：先启动独立服务器…";
+            await LaunchSelected();
+        }
         prefs.WebPort = port;
         prefs.WebEnabled = true;
         webToken = "";
@@ -135,6 +145,42 @@ public partial class MainWindow
         if (actualMap != target.MapName)
             throw new Exception($"Server reports map '{actualMap}', the web switch claimed '{target.MapName}'");
         evidence.Add($"PASS web map switch {before} -> {target.MapName} confirmed by the server's own status");
+
+        // 5c. Covers are real bytes from two different stores: an embedded PNG for
+        //     official maps, a cached JPEG for workshop maps. Serving a broken
+        //     <img> would look like a working page in every other check here.
+        var withCover = maps.Where(m => m.Local).Select(m => new
+        {
+            m.Identity,
+            m.MapName,
+            m.Official,
+            Bytes = m.Official
+                ? (OfficialMaps.HasCover(m.MapName) ? 1 : 0)
+                : (File.Exists(Path.Combine(dataDir, "covers", m.Id + ".jpg")) ? 1 : 0),
+        }).FirstOrDefault(x => x.Bytes == 1);
+        if (withCover == null) throw new Exception("No map with a cover is available to test");
+        var cover = await client.GetAsync("api/cover?identity=" + Uri.EscapeDataString(withCover.Identity));
+        var coverBytes = await cover.Content.ReadAsByteArrayAsync();
+        var coverType = cover.Content.Headers.ContentType?.MediaType ?? "";
+        if (!cover.IsSuccessStatusCode) throw new Exception("Cover request failed: " + (int)cover.StatusCode);
+        if (coverBytes.Length < 512) throw new Exception($"Cover is only {coverBytes.Length} bytes");
+        // PNG and JPEG both start with a fixed signature; anything else means the
+        // bytes are not an image at all (an HTML error page, for instance).
+        bool isPng = coverBytes.Length > 8 && coverBytes[0] == 0x89 && coverBytes[1] == 0x50 && coverBytes[2] == 0x4E && coverBytes[3] == 0x47;
+        bool isJpeg = coverBytes.Length > 3 && coverBytes[0] == 0xFF && coverBytes[1] == 0xD8 && coverBytes[2] == 0xFF;
+        if (!isPng && !isJpeg) throw new Exception("Cover bytes are neither PNG nor JPEG");
+        if (coverType != (isPng ? "image/png" : "image/jpeg")) throw new Exception($"Cover served as {coverType} but bytes are {(isPng ? "PNG" : "JPEG")}");
+        evidence.Add($"PASS cover {withCover.Identity} served as {coverType}, {coverBytes.Length} bytes, signature verified");
+
+        // A map with no cover must say so instead of returning an empty 200 the
+        // browser would render as a broken image.
+        var bare = maps.Where(m => m.Local).FirstOrDefault(m => m.Official && !OfficialMaps.HasCover(m.MapName));
+        if (bare != null)
+        {
+            var missing = await client.GetAsync("api/cover?identity=" + Uri.EscapeDataString(bare.Identity));
+            if (missing.IsSuccessStatusCode) throw new Exception("A coverless map answered 200 for its cover");
+            evidence.Add($"PASS coverless map {bare.Identity} answered {(int)missing.StatusCode} instead of an empty image");
+        }
 
         // 6. A command must actually reach the server and its output must come back.
         // Not "LANTERN_...": GameConsole treats that prefix as its own protocol

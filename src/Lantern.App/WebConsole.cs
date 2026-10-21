@@ -1,3 +1,4 @@
+using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -185,6 +186,9 @@ public partial class MainWindow
             if (!SameSecret(CookieToken(request), webToken))
                 return HttpResponse.Json("{\"ok\":false,\"error\":\"需要口令\",\"auth\":false}");
 
+            // Images are served outside the JSON switch: they answer with bytes.
+            if (request.Path == "/api/cover" && request.Method == "GET") return Cover(request.Param("identity") ?? "");
+
             return (request.Path, request.Method) switch
             {
                 ("/api/state", "GET") => HttpResponse.Json(await OnUi(() => StateJsonAsync(request))),
@@ -317,12 +321,38 @@ public partial class MainWindow
                 title = m.Title,
                 mapName = m.MapName,
                 official = m.Official,
+                cover = m.Official ? OfficialMaps.HasCover(m.MapName) : File.Exists(Path.Combine(dataDir, "covers", m.Id + ".jpg")),
                 current = room != null && RoomTransitions.Matches(room, m),
             }).ToList(),
+            join = JoinPayload(room),
             seq = webSeq,
             log = lines,
         };
         return JsonSerializer.Serialize(payload);
+    }
+
+    // The one command a friend runs: Win+R, paste, Enter. Prefer the address the
+    // host configured, because that is the one they actually forwarded; never
+    // invent a public address, and say which source it came from.
+    object JoinPayload(RoomStatus? room)
+    {
+        if (room == null) return new { command = "", source = "", error = "" };
+        var configured = AddressBox.Text.Trim();
+        if (configured.Length == 0)
+            return new { command = "", source = "", error = "" };
+        try
+        {
+            return new
+            {
+                command = Hosting.SteamConnectUrl(configured, room.Port),
+                source = "房主在「好友联机」页填写的地址",
+                error = "",
+            };
+        }
+        catch (ArgumentException ex)
+        {
+            return new { command = "", source = "", error = ex.Message };
+        }
     }
 
     async Task<string> SwitchMapFromWeb(HttpRequest request)
@@ -417,6 +447,49 @@ public partial class MainWindow
             finally { webBusy--; }
         }
         catch (Exception ex) { return Fail(ex.Message); }
+    }
+
+    // Covers come from two very different places: official maps ship a PNG inside
+    // the executable, workshop maps have a JPEG cached from Steam. Both are read
+    // once and kept, keyed by identity, because the page asks on every render.
+    readonly Dictionary<string, (string Stamp, byte[] Bytes, string Type)> covers = new();
+    readonly Queue<string> coverOrder = new();
+
+    HttpResponse Cover(string identity)
+    {
+        try
+        {
+            var map = maps.FirstOrDefault(m => m.Identity == identity);
+            if (map == null) return HttpResponse.Text("没有这张地图。", 404);
+            var stamp = map.Official
+                ? "official:" + map.MapName
+                : CoverPath(map) is { } path && File.Exists(path) ? path + "|" + File.GetLastWriteTimeUtc(path).Ticks : "";
+            if (stamp.Length == 0) return HttpResponse.Text("这张地图没有封面。", 404);
+            if (covers.TryGetValue(stamp, out var cached))
+                return HttpResponse.Bytes(cached.Bytes, cached.Type).With("Cache-Control", "private, max-age=900");
+            var bytes = map.Official ? EmbeddedCover(map.MapName) : File.ReadAllBytes(CoverPath(map)!);
+            if (bytes == null) return HttpResponse.Text("这张地图没有封面。", 404);
+            var type = map.Official ? "image/png" : "image/jpeg";
+            while (coverOrder.Count >= 64) covers.Remove(coverOrder.Dequeue());
+            covers[stamp] = (stamp, bytes, type);
+            coverOrder.Enqueue(stamp);
+            return HttpResponse.Bytes(bytes, type).With("Cache-Control", "private, max-age=900");
+        }
+        catch (Exception ex) { return HttpResponse.Text("封面读取失败：" + ex.Message, 500); }
+    }
+
+    string? CoverPath(MapEntry map) => map.Official ? null : Path.Combine(dataDir, "covers", map.Id + ".jpg");
+
+    static byte[]? EmbeddedCover(string mapName)
+    {
+        if (!OfficialMaps.HasCover(mapName)) return null;
+        var resource = System.Windows.Application.GetResourceStream(
+            new Uri($"pack://application:,,,/Assets/Maps/{mapName}.png"));
+        if (resource == null) return null;
+        using var stream = resource.Stream;
+        using var buffer = new MemoryStream();
+        stream.CopyTo(buffer);
+        return buffer.ToArray();
     }
 
     static string Fail(string message) => JsonSerializer.Serialize(new { ok = false, error = message });

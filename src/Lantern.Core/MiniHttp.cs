@@ -106,7 +106,10 @@ public sealed class MiniHttp : IDisposable
         head.Append("HTTP/1.1 ").Append(response.Status).Append(' ').Append(Reason(response.Status)).Append("\r\n");
         head.Append("Content-Type: ").Append(response.ContentType).Append("\r\n");
         head.Append("Content-Length: ").Append(response.Body.Length).Append("\r\n");
-        head.Append("Cache-Control: no-store\r\n");
+        // JSON state must never be cached; a cover image may be, and the browser
+        // asking for the same thumbnail on every poll is pure waste.
+        if (response.Extra == null || !response.Extra.Any(e => e.Name.Equals("Cache-Control", StringComparison.OrdinalIgnoreCase)))
+            head.Append("Cache-Control: no-store\r\n");
         head.Append("X-Content-Type-Options: nosniff\r\n");
         head.Append("Referrer-Policy: no-referrer\r\n");
         if (response.Extra != null)

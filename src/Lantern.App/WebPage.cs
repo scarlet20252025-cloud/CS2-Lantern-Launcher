@@ -60,12 +60,26 @@ static class WebPage
   button.ghost{background:transparent}
   .maps{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;max-height:340px;overflow:auto;padding-right:4px}
   .map{display:flex;flex-direction:column;gap:8px;background:var(--card2);border:1px solid var(--line);
-       border-radius:9px;padding:12px 13px;text-align:left;min-height:118px}
+       border-radius:9px;padding:0 0 12px;text-align:left;min-height:118px;overflow:hidden}
   .map.cur{border-color:var(--amber);background:#302B26}
+  .map .cover{height:104px;background:#253346;display:flex;align-items:center;justify-content:center;
+              color:#7A8CA4;font:11px Consolas,monospace;letter-spacing:.1em;overflow:hidden}
+  .map .cover img{width:100%;height:100%;object-fit:cover;display:block}
+  .map .body{display:flex;flex-direction:column;gap:8px;padding:10px 13px 0;flex:1;min-width:0}
   .map .t{font-weight:600;font-size:13px;line-height:1.4;min-height:36px;
           display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   .map .m{font-family:Consolas,monospace;font-size:11.5px;color:var(--accent);overflow-wrap:anywhere}
-  .map .b{margin-top:auto;align-self:stretch;padding:7px 10px;font-size:12.5px}
+  .map .b{margin:0 13px;padding:7px 10px;font-size:12.5px}
+  .hero{display:flex;gap:14px;align-items:stretch;margin-bottom:14px}
+  .hero[hidden]{display:none}
+  #mapsEmpty[hidden],#playersEmpty[hidden],#gate[hidden],#app[hidden]{display:none}
+  .hero .shot{width:172px;flex:0 0 auto;height:97px;border-radius:8px;overflow:hidden;background:#253246;
+              display:flex;align-items:center;justify-content:center;color:#7A8CA4;font:11px Consolas,monospace}
+  .hero .shot img{width:100%;height:100%;object-fit:cover;display:block}
+  .hero .meta{display:flex;flex-direction:column;justify-content:center;gap:4px;min-width:0}
+  .hero .meta b{font-size:17px;font-weight:600}
+  .hero .meta span{color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+  @media (max-width:560px){ .hero{flex-direction:column} .hero .shot{width:100%;height:150px} }
   #log{background:#0A121D;border:1px solid var(--line);border-radius:9px;height:300px;overflow:auto;
        padding:10px 12px;font:12px/1.55 Consolas,ui-monospace,monospace;white-space:pre-wrap;word-break:break-word;color:#C6D3E4}
   #log .sys{color:var(--amber)}
@@ -86,6 +100,15 @@ static class WebPage
   #gate h1{font-size:18px;margin:0 0 6px}
   #gate p{color:var(--muted);font-size:12.5px;margin:0 0 16px}
   .foot{color:var(--dim);font-size:11.5px;margin-top:18px;line-height:1.7}
+  .join{background:#12251c;border:1px solid #2d5340;border-radius:10px;padding:13px 15px;margin-bottom:12px}
+  .join .cmd{font:13px/1.6 Consolas,ui-monospace,monospace;color:#C8ECD6;background:#0A121D;
+             border:1px solid #26402f;border-radius:8px;padding:11px 13px;overflow-wrap:anywhere;
+             user-select:all;-webkit-user-select:all}
+  .join .steps{color:#9FC0AC;font-size:12px;margin-top:9px;line-height:1.75}
+  .join .steps b{color:var(--accent)}
+  .join .row{margin-top:10px}
+  .join button.primary{background:#3E6B4F;color:#EAF6EE}
+  .join .warnline{color:var(--amber);font-size:12px;margin-top:8px}
 </style>
 </head>
 <body>
@@ -110,6 +133,10 @@ static class WebPage
   <main id="app" hidden>
     <div class="card">
       <h2>服务器状态 <span class="hint" id="kindHint"></span></h2>
+      <div class="hero" id="hero" hidden>
+        <div class="shot" id="heroShot"><img id="heroImg" alt=""></div>
+        <div class="meta"><b id="heroTitle">—</b><span id="heroSub"></span></div>
+      </div>
       <div class="stats">
         <div class="stat"><b id="sMap" class="mapname">—</b><span>当前地图</span></div>
         <div class="stat"><b id="sHumans">0</b><span>在线真人</span></div>
@@ -118,6 +145,19 @@ static class WebPage
         <div class="stat"><b id="sCap">—</b><span>人数上限（启动参数）</span></div>
       </div>
       <div class="foot" id="addrLine"></div>
+    </div>
+
+    <div class="card">
+      <h2>加入这台服务器 <span class="hint" id="joinHint"></span></h2>
+      <div class="join">
+        <div class="cmd" id="joinCmd">服务器开图后这里会出现加入指令。</div>
+        <div class="steps">
+          使用方法：<b>复制</b>上面这一整行 → 按 <b>Win + R</b> 打开“运行” → <b>粘贴</b> → 回车。<br>
+          不用装启动器，也不用打开游戏控制台；Steam 会自动带参数启动 CS2 并连进来。
+        </div>
+        <div class="row"><button class="primary" id="copyJoin">复制加入指令</button></div>
+        <div class="warnline" id="joinWarn" hidden></div>
+      </div>
     </div>
 
     <div class="card">
@@ -213,6 +253,63 @@ static class WebPage
     if (atBottom) box.scrollTop = box.scrollHeight;
   }
 
+  var joinCommand = "";
+
+  function renderJoin(sv, join){
+    var box = $("joinCmd"), warn = $("joinWarn"), hint = $("joinHint");
+    warn.hidden = true;
+    if (!sv.running){
+      joinCommand = "";
+      box.textContent = "服务器还没开图，开好后这里会出现加入指令。";
+      hint.textContent = "";
+      $("copyJoin").disabled = true;
+      return;
+    }
+    // Prefer what the host configured (a public IP or domain they forwarded).
+    var command = join.command || "";
+    var source = join.source || "";
+    if (!command){
+      // Fall back to the host this page was reached on: a forwarded web port
+      // usually lives on the same machine as the forwarded game port. Say so
+      // instead of pretending it is authoritative.
+      var host = location.hostname;
+      if (host && host !== "127.0.0.1" && host !== "localhost" && sv.port){
+        command = "steam://run/730//+connect " + host + ":" + sv.port + "/";
+        source = "按你打开本页的地址推断";
+      }
+    }
+    joinCommand = command;
+    if (!command){
+      box.textContent = "房主还没填对外地址。请在启动器「好友联机」页填上公网 IP 或域名，或让房主把这条指令发给你。";
+      hint.textContent = "";
+      $("copyJoin").disabled = true;
+      if (join.error){ warn.hidden = false; warn.textContent = join.error; }
+      return;
+    }
+    box.textContent = command;
+    hint.textContent = source ? "来源：" + source : "";
+    $("copyJoin").disabled = false;
+    if (join.error){ warn.hidden = false; warn.textContent = join.error; }
+  }
+
+  function copyJoin(){
+    if (!joinCommand) return;
+    var done = function(){ toast("已复制。现在按 Win + R，粘贴，回车。"); };
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(joinCommand).then(done, function(){ fallbackCopy(); });
+    } else fallbackCopy();
+    function fallbackCopy(){
+      // http:// on a LAN address is not a "secure context", so the async
+      // clipboard API is unavailable exactly where this page is most used.
+      var area = document.createElement("textarea");
+      area.value = joinCommand; area.style.position = "fixed"; area.style.opacity = "0";
+      document.body.appendChild(area); area.select();
+      try { document.execCommand("copy"); done(); }
+      catch (e) { toast("复制失败，请手动选中上面那一行。", true); }
+      document.body.removeChild(area);
+    }
+  }
+
   function renderMaps(maps){
     var host = $("maps"), shown = 0;
     host.textContent = "";
@@ -222,7 +319,21 @@ static class WebPage
       shown++;
       var card = document.createElement("div");
       card.className = "map" + (m.current ? " cur" : "");
-      card.innerHTML = '<div class="t">' + esc(m.title) + '</div><div class="m">' + esc(m.mapName) + '</div>';
+      var cover = document.createElement("div");
+      cover.className = "cover";
+      if (m.cover){
+        var img = document.createElement("img");
+        img.loading = "lazy"; img.alt = "";
+        // The token lives in a cookie, so a plain <img> is already authorised.
+        img.src = "/api/cover?identity=" + encodeURIComponent(m.identity);
+        img.onerror = function(){ cover.textContent = "WORKSHOP"; };
+        cover.appendChild(img);
+      } else { cover.textContent = m.official ? "CS2" : "WORKSHOP"; }
+      card.appendChild(cover);
+      var body = document.createElement("div");
+      body.className = "body";
+      body.innerHTML = '<div class="t">' + esc(m.title) + '</div><div class="m">' + esc(m.mapName) + '</div>';
+      card.appendChild(body);
       var b = document.createElement("button");
       b.className = "b" + (m.current ? " ghost" : " primary");
       b.textContent = m.current ? "当前地图" : "换到这张";
@@ -235,7 +346,8 @@ static class WebPage
   }
 
   function switchMap(m){
-    if (!confirm("换到《" + m.title + "》？\n\n服务器会卸载当前地图。正在加载的玩家可能需要重连。")) return;
+    // No confirm(): a blocking browser dialog is exactly what the host asked to
+    // avoid, and the button already names the map it will load.
     busy(true);
     api("/api/map", { identity: m.identity }).then(function(r){
       busy(false);
@@ -277,7 +389,29 @@ static class WebPage
     });
     $("playersEmpty").hidden = rows.length > 0;
 
+    renderJoin(sv, s.join || {});
+
     renderMaps(s.maps || []);
+
+    // The hero shows the map the server itself reports, so a failed switch can
+    // never be mistaken for a successful one because the picture changed.
+    var all = s.maps || [];
+    var currentEntry = null;
+    for (var i = 0; i < all.length; i++) if (all[i].current) { currentEntry = all[i]; break; }
+    if (sv.running && currentEntry){
+      $("hero").hidden = false;
+      $("heroTitle").textContent = currentEntry.title;
+      $("heroSub").textContent = currentEntry.mapName + " · " + (sv.addon ? ("工坊 " + sv.addon) : "官方地图") +
+        " · 真人 " + (sv.humans || 0) + " / 人机 " + (sv.bots || 0);
+      var shot = $("heroShot"), picture = $("heroImg");
+      if (currentEntry.cover){
+        picture.style.display = "block";
+        if (picture.getAttribute("src") !== "/api/cover?identity=" + encodeURIComponent(currentEntry.identity))
+          picture.src = "/api/cover?identity=" + encodeURIComponent(currentEntry.identity);
+      } else { picture.removeAttribute("src"); picture.style.display = "none"; shot.textContent = "CS2"; }
+    } else {
+      $("hero").hidden = true;
+    }
 
     if (s.log && s.log.length){
       s.log.forEach(function(line){
@@ -328,6 +462,7 @@ static class WebPage
   };
   $("token").onkeydown = function(e){ if (e.key === "Enter") $("login").click(); };
 
+  $("copyJoin").onclick = copyJoin;
   $("send").onclick = send;
   $("cmd").onkeydown = function(e){ if (e.key === "Enter") send(); };
   $("clearLog").onclick = function(){ $("log").textContent = ""; };
@@ -338,7 +473,6 @@ static class WebPage
       var action = b.dataset.bot, body = { action: action };
       if (action === "add") { body.team = b.dataset.team; body.count = parseInt($("botCount").value, 10) || 1; }
       if (action === "balance") { body.count = parseInt($("balanceTotal").value, 10) || 10; }
-      if (action === "remove" && !confirm("清除服务器上的所有人机？")) return;
       busy(true);
       api("/api/bots", body).then(function(r){
         busy(false);
