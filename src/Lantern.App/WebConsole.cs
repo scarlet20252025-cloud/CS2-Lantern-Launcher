@@ -297,6 +297,9 @@ public partial class MainWindow
         {
             ok = true,
             busy = launching || webBusy > 0,
+            // Launching narrates itself into RunText ("正在初始化…", "正在加载工坊地图…",
+            // "已就绪"). Forwarding that is a real stage, not a timer pretending to be one.
+            stage = launching ? RunText.Text : "",
             error,
             server = new
             {

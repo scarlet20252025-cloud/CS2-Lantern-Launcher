@@ -35,6 +35,11 @@ static class WebPage
   .dot.on{background:var(--green);box-shadow:0 0 8px #92BA9A88}
   .dot.busy{background:var(--amber)}
   .card{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:13px;margin-bottom:10px}
+  /* Main column plus a fixed players rail; the rail is the thing you glance at
+     while playing, so it must not be something you scroll to find. */
+  .cols{display:grid;grid-template-columns:minmax(0,1fr) 292px;gap:10px;align-items:start}
+  .side{position:sticky;top:10px}
+  @media (max-width:900px){ .cols{grid-template-columns:1fr} .side{position:static;order:-1} }
   h2{font-size:14px;margin:0 0 9px;font-weight:600;display:flex;align-items:center;gap:8px}
   h2 .hint{font-weight:400;font-size:11.5px;color:var(--dim);margin-left:auto}
   .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:8px}
@@ -47,15 +52,20 @@ static class WebPage
   td{padding:5px 8px;border-bottom:1px solid #202d40;font-variant-numeric:tabular-nums}
   tr:last-child td{border-bottom:none}
   .tag{font-size:10.5px;padding:1px 6px;border-radius:5px;border:1px solid var(--line);color:var(--muted)}
-  .tag.bot{color:#9DC3E6;border-color:#2f4a63}
+  .tag.bot{color:#8FA6BF;border-color:#2f4a63}
+  .tag.human{color:#0F1A0F;background:var(--green);border-color:var(--green);font-weight:600}
   .tag.ok{color:var(--green);border-color:#33523d}
   .tag.wait{color:var(--amber);border-color:#5a4527}
   .empty{color:var(--dim);font-size:12.5px;padding:8px 0}
   button{font:inherit;cursor:pointer;border-radius:8px;border:1px solid var(--line);
          background:#253246;color:var(--text);padding:7px 12px;transition:.12s}
-  button:hover:not(:disabled){border-color:var(--amber)}
+  button:hover:not(:disabled){border-color:var(--amber);background:#33445C}
+  button:active:not(:disabled){background:#1B2637;border-color:#FFBF79}
   button:disabled{opacity:.45;cursor:not-allowed}
   button.primary{background:var(--amber);color:#141C25;font-weight:600;border-color:transparent}
+  button.primary:hover:not(:disabled){background:#FFCB8F;border-color:transparent}
+  button.primary:active:not(:disabled){background:#E9A75C;border-color:transparent}
+  button.warn:hover:not(:disabled){background:#4A362A;border-color:var(--amber)}
   button.warn{background:#3a2b22;color:#FFD09A;border-color:#5a4527}
   button.ghost{background:transparent}
   .maps{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:7px;max-height:min(52vh,460px);overflow:auto;padding-right:4px}
@@ -71,9 +81,22 @@ static class WebPage
         display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   .map .m{font-family:Consolas,monospace;font-size:11px;color:var(--accent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .note{color:var(--muted);font-size:11.5px;margin:0 0 8px;line-height:1.6}
+  .prog{display:none;margin:0 0 10px;padding:9px 11px;border-radius:8px;
+        background:#132A33;border:1px solid #27505C}
+  .prog[data-on="1"]{display:block}
+  .prog .bar{height:3px;border-radius:2px;background:#1E3B45;overflow:hidden;margin-bottom:7px}
+  .prog .bar i{display:block;height:100%;width:38%;border-radius:2px;background:var(--amber);
+               animation:slide 1.15s ease-in-out infinite}
+  @keyframes slide{0%{transform:translateX(-110%)}100%{transform:translateX(370%)}}
+  .prog .txt{color:#BFD9E2;font-size:12px;line-height:1.55}
   .map .act{display:flex;gap:6px;flex:0 0 auto;align-items:center}
-  .map .b{margin:0;padding:6px 11px;font-size:12px;flex:0 0 auto;text-decoration:none}
-  .map .shop{padding:6px 9px;font-size:11.5px;color:#A9C6E8;border-color:#2f4a63}
+  .map .b{margin:0;padding:6px 11px;font-size:12px;flex:0 0 auto;text-decoration:none;
+           transition:background .12s,border-color .12s,filter .12s}
+  .map .shop{padding:6px 9px;font-size:11.5px;color:#A9C6E8;border-color:#2f4a63;border-radius:8px;
+             border:1px solid #2f4a63}
+  .map .shop:hover{background:#2C4A66;border-color:#9CC9EC;color:#E6F3FF}
+  .map .b.primary:hover{filter:brightness(1.12)}
+  .map .b.ghost:hover{background:#3C4F6B;border-color:var(--amber)}
   .hero{display:flex;gap:12px;align-items:stretch;margin-bottom:9px}
   .hero[hidden]{display:none}
   #mapsEmpty[hidden],#playersEmpty[hidden],#app[hidden]{display:none}
@@ -143,6 +166,7 @@ static class WebPage
   <main id="app">
     <div class="card">
       <h2>服务器状态 <span class="hint" id="kindHint"></span></h2>
+      <div class="prog" id="prog"><div class="bar"><i></i></div><div class="txt" id="progTxt">正在启动…</div></div>
       <div class="row" id="serverRow" style="margin:0 0 10px">
         <button class="primary" id="startServer">启动服务器</button>
         <button class="warn" id="restartServer">重启服务器</button>
@@ -162,6 +186,8 @@ static class WebPage
       <div class="foot" id="addrLine"></div>
     </div>
 
+    <div class="cols">
+    <div>
     <div class="card">
       <h2>加入这台服务器 <span class="hint" id="joinHint"></span></h2>
       <div class="join">
@@ -175,14 +201,6 @@ static class WebPage
       </div>
     </div>
 
-    <div class="card">
-      <h2>谁在房间里 <span class="hint">只有进入地图的人算“就绪”</span></h2>
-      <table>
-        <thead><tr><th style="width:64px">槽位</th><th>名字</th><th style="width:110px">状态</th><th style="width:64px">类型</th></tr></thead>
-        <tbody id="players"></tbody>
-      </table>
-      <div class="empty" id="playersEmpty">还没有人。</div>
-    </div>
 
     <div class="card">
       <h2>换地图 <span class="hint">换图会保留房间，但正在加载的玩家可能掉线</span></h2>
@@ -238,6 +256,20 @@ static class WebPage
         <button data-quick="practice_money">练习经济 60000</button>
       </div>
     </div>
+
+    </div><!-- /main column -->
+    <aside class="side">
+    <div class="card">
+      <h2>谁在房间里 <span class="hint">只有进入地图的人算“就绪”</span></h2>
+      <table>
+        <thead><tr><th style="width:44px">槽位</th><th>名字</th><th style="width:78px">状态</th><th style="width:56px">类型</th></tr></thead>
+        <tbody id="players"></tbody>
+      </table>
+      <div class="empty" id="playersEmpty">还没有人。</div>
+      <button class="ghost" id="moreBots" style="width:100%;margin-top:8px;display:none"></button>
+    </div>
+    </aside>
+    </div><!-- /cols -->
 
     <div class="card">
       <h2>控制台 <span class="hint">命令直接下发到服务器，输出会回到这里</span></h2>
@@ -295,6 +327,8 @@ static class WebPage
   }
 
   var joinCommand = "";
+  var botReveal = 0;
+  var stageSeen = "";
 
   function renderJoin(sv, join){
     var box = $("joinCmd"), warn = $("joinWarn"), hint = $("joinHint");
@@ -429,6 +463,20 @@ static class WebPage
     var sv = s.server || {};
     $("dot").className = "dot " + (s.busy ? "busy" : (sv.running ? "on" : ""));
     $("conn").textContent = s.busy ? "正在处理…" : (sv.running ? "服务器在线" : "服务器未加载地图");
+
+    // A launch can take a minute and a half; without a stage the page looked
+    // frozen. Show the launcher's own narration, not a fake percentage.
+    var prog = $("prog");
+    prog.dataset.on = s.busy ? "1" : "0";
+    if (s.busy){
+      var stage = (s.stage || "").trim();
+      stageSeen = stage || stageSeen;
+      $("progTxt").textContent = stage || "服务器正在启动，加载地图通常需要 30–90 秒…";
+    } else if (stageSeen){
+      // Keep the last stage visible for one poll after finishing, so the page
+      // does not blink back to "服务器未加载地图" before the state catches up.
+      stageSeen = "";
+    }
     $("sMap").textContent = sv.map || "—";
     $("sHumans").textContent = sv.humans || 0;
     $("sBots").textContent = sv.bots || 0;
@@ -450,16 +498,37 @@ static class WebPage
       ? ("服务器身份 " + (sv.identity || "未提供") + " · UDP " + sv.port)
       : "独立服务器尚未加载地图；启动器里开图后这里会自动出现。";
 
-    var rows = s.players || [];
+    // Humans first, then bots, and only the first ten bots until asked for more:
+    // a full bot roster buried the two people you actually came to look at.
+    var rows = (s.players || []).slice().sort(function(a, b){
+      if (a.bot !== b.bot) return a.bot ? 1 : -1;
+      return a.id - b.id;
+    });
+    var humans = rows.filter(function(p){ return !p.bot; });
+    var bots = rows.filter(function(p){ return p.bot; });
+    var shown = humans.concat(bots.slice(0, 10 + botReveal));
     var tb = $("players"); tb.textContent = "";
-    rows.forEach(function(p){
+    shown.forEach(function(p){
       var tr = document.createElement("tr");
       var state = p.state === "active" ? '<span class="tag ok">在游戏中</span>'
                 : '<span class="tag wait">' + esc(p.state) + '</span>';
-      tr.innerHTML = '<td>' + p.id + '</td><td>' + esc(p.name) + '</td><td>' + state + '</td><td>' +
-        (p.bot ? '<span class="tag bot">人机</span>' : '<span class="tag">真人</span>') + '</td>';
+      tr.innerHTML = '<td>' + (p.bot ? p.id : '<b>' + p.id + '</b>') + '</td>'
+        + '<td>' + (p.bot ? '<span style="color:#9FB0C6">' + esc(p.name) + '</span>'
+                          : '<b>' + esc(p.name) + '</b>') + '</td>'
+        + '<td>' + state + '</td><td>' +
+        (p.bot ? '<span class="tag bot">人机</span>' : '<span class="tag human">真人</span>') + '</td>';
       tb.appendChild(tr);
     });
+    var hiddenBots = bots.length - Math.min(bots.length, 10 + botReveal);
+    var more = $("moreBots");
+    more.style.display = (hiddenBots > 0 || botReveal > 0) ? "" : "none";
+    more.textContent = hiddenBots > 0
+      ? ("还有 " + hiddenBots + " 个人机 · 展开")
+      : "收起人机";
+    more.onclick = function(){
+      botReveal = hiddenBots > 0 ? botReveal + 50 : 0;
+      if (lastState) render(lastState);
+    };
     $("playersEmpty").hidden = rows.length > 0;
 
     renderJoin(sv, s.join || {});
@@ -500,15 +569,25 @@ static class WebPage
     if (s.busy !== wasBusy) busy(!!s.busy);
   }
 
+  var timer = null;
+
+  // A launch moves through stages in seconds; polling it every 3 s made the
+  // progress line sit still long enough to look hung. Poll faster while work is
+  // in flight, and fall back to the calm interval when it settles.
+  function nextInterval(){
+    if (document.body.dataset.busy === "1") return 1200;
+    return 3000;
+  }
+
   function tick(){
     api("/api/state?since=" + seq).then(function(s){
       if (!s.ok) { toast(s.error || "读取失败", true); return; }
       render(s);
-      if (!timer) timer = setInterval(tick, 3000);
+      setTimeout(tick, nextInterval());
     }).catch(function(){
       $("dot").className = "dot";
       $("conn").textContent = "连接中断，正在重试…";
-      if (!timer) timer = setInterval(tick, 3000);
+      setTimeout(tick, 3000);
     });
   }
 

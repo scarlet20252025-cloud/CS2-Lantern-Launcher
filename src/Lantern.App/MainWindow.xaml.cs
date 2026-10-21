@@ -85,6 +85,9 @@ public partial class MainWindow : Window
             RootBox.Text = install.Root; ExtraBox.Text = prefs.Extra;
             ModeBox.ItemsSource = GameMode.All; ModeBox.SelectedIndex = Math.Clamp(prefs.Settings.ModeIndex, 0, GameMode.All.Length - 1);
             LoadSettings(prefs.Settings); TrayCheck.IsChecked = prefs.CloseToTray; ready = true; HostChanged(null, null!);
+            // Must happen before any Save(): Save() writes this box back to prefs,
+            // and Scan() below saves, so an empty box here would erase the address.
+            JoinAddressBox.Text = prefs.JoinAddress;
             SetView(prefs.GridView);
             // Restore a deliberate official-map selection (including crash recovery).
             // New users still default to local workshop maps.
@@ -93,7 +96,6 @@ public partial class MainWindow : Window
             AutoRefreshCheck.IsChecked = prefs.AutoRefresh;
             WebCheck.IsChecked = prefs.WebEnabled;
             WebPortBox.Text = prefs.WebPort.ToString();
-            JoinAddressBox.Text = prefs.JoinAddress;
             if (prefs.WebEnabled) { WebPanel.Visibility = Visibility.Visible; StartWebConsole(); }
             if (!smoke) { mapTimer.Start(); roomTimer.Start(); }
             if (smoke)
