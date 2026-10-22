@@ -621,14 +621,46 @@ public partial class MainWindow
 
     static string Fail(string message) => JsonSerializer.Serialize(new { ok = false, error = message });
 
+    // Everything the server prints also goes to a file. The in-memory buffer is
+    // small because the page has to stay light, and "status" alone prints dozens
+    // of lines every few seconds - which is exactly how the reason a player
+    // dropped got evicted before anyone could read it.
+    StreamWriter? serverLog;
+    readonly object serverLogLock = new();
+
+    void OpenServerLog()
+    {
+        lock (serverLogLock)
+        {
+            try
+            {
+                Directory.CreateDirectory(dataDir);
+                var path = Path.Combine(dataDir, "server-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".log");
+                serverLog = new StreamWriter(path, append: true, System.Text.Encoding.UTF8) { AutoFlush = true };
+                serverLog.WriteLine("// CS2 Lantern server log, started " + DateTime.Now.ToString("O"));
+            }
+            catch (IOException) { serverLog = null; }
+        }
+    }
+
+    void CloseServerLog()
+    {
+        lock (serverLogLock) { try { serverLog?.Dispose(); } catch (Exception) { } serverLog = null; }
+    }
+
     /// <summary>Called from the terminal's log pump; must stay cheap and thread-safe.</summary>
     void WebLog(string text)
     {
         var seq = Interlocked.Increment(ref webSeq);
+        var line = text.TrimEnd('\r', '\n');
         lock (webLogLock)
         {
-            webLog.Add((seq, text.TrimEnd('\r', '\n')));
+            webLog.Add((seq, line));
             if (webLog.Count > 800) webLog.RemoveRange(0, webLog.Count - 800);
+        }
+        lock (serverLogLock)
+        {
+            try { serverLog?.WriteLine(line); } catch (Exception) { /* A full disk must not stop the game. */ }
         }
     }
 }

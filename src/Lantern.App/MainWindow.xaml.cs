@@ -976,6 +976,9 @@ public partial class MainWindow : Window
         bool dedicated = HostBox.SelectedIndex != 0;
         if (terminal != null && terminal.Dedicated != dedicated) terminal.Close();
         if (terminal != null) return terminal;
+        // A fresh terminal means a fresh server process: its output needs its own
+        // file, otherwise a drop reason from the previous round gets mixed in.
+        CloseServerLog(); OpenServerLog();
         terminal = new TerminalWindow(RootBox.Text.Trim(), dedicated) { Owner = this };
         terminal.EnableTerminalRequested = EnableClientTerminal;
         terminal.RaiseCapacityRequested = RaiseCapacity;
