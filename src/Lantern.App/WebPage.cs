@@ -39,7 +39,12 @@ static class WebPage
      while playing, so it must not be something you scroll to find. */
   .cols{display:grid;grid-template-columns:minmax(0,1fr) 318px;gap:10px;align-items:start}
   .side{position:sticky;top:10px}
-  @media (max-width:900px){ .cols{grid-template-columns:1fr} .side{position:static;order:-1} }
+  /* Left rail: chat. It sits beside the map list rather than above it so the
+     room conversation is visible while you are picking a map. */
+  .left{position:sticky;top:10px}
+  .cols{grid-template-columns:300px minmax(0,1fr) 318px}
+  @media (max-width:1180px){ .cols{grid-template-columns:270px minmax(0,1fr)} .side{grid-column:1 / -1;position:static} }
+  @media (max-width:900px){ .cols{grid-template-columns:1fr} .left,.side{position:static} .left{order:0} }
   h2{font-size:14px;margin:0 0 9px;font-weight:600;display:flex;align-items:center;gap:8px}
   h2 .hint{font-weight:400;font-size:11.5px;color:var(--dim);margin-left:auto}
   .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:8px}
@@ -56,6 +61,25 @@ static class WebPage
   .tag.human{color:#0F1A0F;background:var(--green);border-color:var(--green);font-weight:600}
   .tag.ok{color:var(--green);border-color:#33523d}
   .tag.wait{color:var(--amber);border-color:#5a4527}
+  /* Chat */
+  .chat{display:flex;flex-direction:column;gap:7px}
+  .chat .lines{display:flex;flex-direction:column;gap:8px;max-height:min(58vh,520px);overflow-y:auto;
+               padding:2px 4px 2px 0}
+  .chat .m{background:var(--card2);border-radius:8px;padding:7px 9px;position:relative}
+  .chat .m .who{font-size:11.5px;color:var(--accent);font-weight:600;
+                display:flex;align-items:baseline;gap:6px;margin-bottom:2px}
+  /* The stamp is deliberately tiny and tucked into the corner: it is there when
+     you look for it, invisible when you are reading. */
+  .chat .m .at{margin-left:auto;font-size:9.5px;color:#5F7288;font-variant-numeric:tabular-nums;
+               font-family:Consolas,ui-monospace,monospace;letter-spacing:.02em}
+  .chat .m .txt{font-size:12.5px;line-height:1.45;word-break:break-word;white-space:pre-wrap}
+  .chat .m.mine{border-left:2px solid var(--amber)}
+  .chat .compose{display:flex;gap:6px;align-items:flex-end;margin-top:2px}
+  .chat .compose input{flex:1;min-width:0}
+  .chat .name{display:flex;gap:6px;align-items:center;margin-bottom:7px}
+  .chat .name input{flex:1;min-width:0}
+  .chat .name .lbl{color:var(--dim);font-size:11px;flex:0 0 auto}
+  .chat .empty{color:var(--dim);font-size:12px;padding:10px 0;text-align:center}
   .empty{color:var(--dim);font-size:12.5px;padding:8px 0}
   button{font:inherit;cursor:pointer;border-radius:8px;border:1px solid var(--line);
          background:#253246;color:var(--text);padding:7px 12px;transition:.12s}
@@ -188,6 +212,23 @@ static class WebPage
     </div>
 
     <div class="cols">
+    <aside class="left">
+    <div class="card">
+      <h2>房间聊天 <span class="hint" id="chatState">—</span></h2>
+      <div class="chat">
+        <div class="name">
+          <span class="lbl">昵称</span>
+          <input id="chatName" maxlength="24" placeholder="起个名字" autocomplete="off">
+        </div>
+        <div class="lines" id="chatLines"></div>
+        <div class="empty" id="chatEmpty">还没有人说话。</div>
+        <div class="compose">
+          <input id="chatText" maxlength="500" placeholder="说点什么…" autocomplete="off">
+          <button class="primary" id="chatSend">发送</button>
+        </div>
+      </div>
+    </div>
+    </aside>
     <div>
     <div class="card">
       <h2>加入这台服务器 <span class="hint" id="joinHint"></span></h2>
@@ -649,6 +690,91 @@ static class WebPage
       }).catch(function(e){ busy(false); toast("请求失败：" + e.message, true); });
     };
   });
+
+  // ---- chat ----
+  // The name is the only thing kept locally; messages live on the server so a
+  // refresh (or a second viewer) sees the same conversation.
+  (function(){
+    var nameBox = $("chatName"), textBox = $("chatText"), send = $("chatSend");
+    var lines = $("chatLines"), empty = $("chatEmpty"), state = $("chatState");
+    var since = 0, busy = false;
+
+    var saved = "";
+    try { saved = localStorage.getItem("lantern.name") || ""; } catch (e) {}
+    if (saved) nameBox.value = saved;
+    nameBox.addEventListener("change", function(){
+      try { localStorage.setItem("lantern.name", nameBox.value.trim()); } catch (e) {}
+    });
+
+    function myName(){
+      var n = (nameBox.value || "").trim();
+      if (n) { try { localStorage.setItem("lantern.name", n); } catch (e) {} }
+      return n;
+    }
+
+    function add(m){
+      var box = document.createElement("div");
+      box.className = "m" + (m.name === myName() && m.name ? " mine" : "");
+      var who = document.createElement("div");
+      who.className = "who";
+      var n = document.createElement("span");
+      n.textContent = m.name || "匿名";
+      var at = document.createElement("span");
+      at.className = "at";
+      at.textContent = m.at || "";
+      at.title = m.full || m.at || "";
+      who.appendChild(n); who.appendChild(at);
+      var txt = document.createElement("div");
+      txt.className = "txt";
+      txt.textContent = m.text || "";
+      box.appendChild(who); box.appendChild(txt);
+      lines.appendChild(box);
+    }
+
+    function scrollDown(){
+      var near = lines.scrollTop + lines.clientHeight >= lines.scrollHeight - 60;
+      if (near) lines.scrollTop = lines.scrollHeight;
+    }
+
+    function load(){
+      api("/api/chat?since=" + since).then(function(r){
+        if (!r.ok) return;
+        var added = 0;
+        (r.messages || []).forEach(function(m){
+          if (m.seq <= since) return;
+          add(m); since = m.seq; added++;
+        });
+        if (added) { scrollDown(); empty.hidden = true; }
+        if (since === 0) { empty.hidden = false; }
+        if (r.seq) since = Math.max(since, r.seq);
+        state.textContent = since ? "" : "还没有消息";
+      }).catch(function(){ state.textContent = "聊天暂不可用"; });
+    }
+
+    function post(){
+      if (busy) return;
+      var text = (textBox.value || "").trim();
+      if (!text) return;
+      busy = true; send.disabled = true;
+      api("/api/chat", { name: myName(), text: text }).then(function(r){
+        busy = false; send.disabled = false;
+        if (!r.ok) { toast(r.error || "发送失败", true); return; }
+        textBox.value = "";
+        load();
+      }).catch(function(e){
+        busy = false; send.disabled = false;
+        toast("发送失败：" + e.message, true);
+      });
+    }
+
+    send.onclick = post;
+    textBox.addEventListener("keydown", function(e){
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); post(); }
+    });
+
+    load();
+    setInterval(load, 4000);
+  })();
 
   tick();
 })();

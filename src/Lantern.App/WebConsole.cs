@@ -34,6 +34,16 @@ public partial class MainWindow
     readonly List<(long Seq, string Text)> webLog = new();
     long webSeq;
 
+    // Chat lives on the server, not in the page: a refresh must not erase the
+    // conversation, and two people looking at the page must see the same room.
+    // The file is append-only so a crash costs at most the last line.
+    public sealed record ChatLine(long Seq, string Name, string Text, DateTime At);
+    readonly object chatLock = new();
+    readonly List<ChatLine> chat = new();
+    long chatSeq;
+    DateTime lastChatAt = DateTime.MinValue;
+    string ChatPath => Path.Combine(dataDir, "chat.jsonl");
+
     // Reading the room costs two console round-trips. Several viewers polling
     // every three seconds must not multiply that, so the result is reused briefly.
     (DateTime At, RoomStatus? Room, List<PlayerRow> Players, int? Capacity) snapshot;
@@ -41,6 +51,7 @@ public partial class MainWindow
     void StartWebConsole()
     {
         StopWebConsole();
+        LoadChat();
         int port = smokeWebPort ?? (prefs.WebPort is >= 1024 and <= 65535 ? prefs.WebPort : DefaultWebPort);
         try
         {
@@ -223,6 +234,8 @@ public partial class MainWindow
                 ("/api/bots", "POST") => HttpResponse.Json(await OnUi(() => BotsFromWeb(request))),
                 ("/api/quick", "POST") => HttpResponse.Json(await OnUi(() => QuickFromWeb(request))),
                 ("/api/server", "POST") => HttpResponse.Json(await OnUi(() => ServerFromWeb(request))),
+                ("/api/chat", "GET") => HttpResponse.Json(ChatRead(request)),
+                ("/api/chat", "POST") => HttpResponse.Json(ChatWrite(request)),
                 _ => HttpResponse.Text("没有这个接口。", 404),
             };
         }
@@ -646,6 +659,93 @@ public partial class MainWindow
     void CloseServerLog()
     {
         lock (serverLogLock) { try { serverLog?.Dispose(); } catch (Exception) { } serverLog = null; }
+    }
+
+    // ---- chat ----------------------------------------------------------------
+    // No identity, no accounts: whoever opens the page types a name once and it
+    // sticks in their browser. That is enough for a friends' server, and it is
+    // the honest amount of trust a shared link can carry.
+
+    void LoadChat()
+    {
+        lock (chatLock)
+        {
+            if (chat.Count > 0) return;
+            try
+            {
+                if (!File.Exists(ChatPath)) return;
+                foreach (var line in File.ReadLines(ChatPath))
+                {
+                    if (line.Length == 0) continue;
+                    ChatLine? parsed = null;
+                    try { parsed = JsonSerializer.Deserialize<ChatLine>(line); } catch (JsonException) { }
+                    if (parsed == null || parsed.Text.Length == 0) continue;
+                    chat.Add(parsed);
+                    if (parsed.Seq > chatSeq) chatSeq = parsed.Seq;
+                }
+                // A year of chat is not worth replaying into memory.
+                if (chat.Count > 400) chat.RemoveRange(0, chat.Count - 400);
+            }
+            catch (IOException) { /* A missing or locked file is not an error worth surfacing. */ }
+        }
+    }
+
+    string ChatRead(HttpRequest request)
+    {
+        long since = long.TryParse(request.Param("since"), out var parsed) ? parsed : 0;
+        LoadChat();
+        List<ChatLine> lines;
+        lock (chatLock) lines = chat.Where(c => c.Seq > since).ToList();
+        return JsonSerializer.Serialize(new
+        {
+            ok = true,
+            seq = chatSeq,
+            messages = lines.Select(c => new
+            {
+                seq = c.Seq,
+                name = c.Name,
+                text = c.Text,
+                // Local time on purpose: everyone here is in the same timezone,
+                // and a UTC stamp on a chat message is just confusing.
+                at = c.At.ToString("HH:mm"),
+                full = c.At.ToString("yyyy-MM-dd HH:mm:ss"),
+            }).ToList(),
+        });
+    }
+
+    string ChatWrite(HttpRequest request)
+    {
+        string name, text;
+        try
+        {
+            using var json = JsonDocument.Parse(request.Body);
+            name = (json.RootElement.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "").Trim();
+            text = (json.RootElement.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "").Trim();
+        }
+        catch (JsonException) { return Fail("请求格式不对。"); }
+
+        if (text.Length == 0) return Fail("消息不能为空。");
+        if (text.Length > 500) text = text[..500];
+        if (name.Length == 0) name = "匿名";
+        if (name.Length > 24) name = name[..24];
+        // One message per second per person: enough to stop a stuck key from
+        // filling the file, loose enough that nobody notices it.
+        var now = DateTime.Now;
+        lock (chatLock)
+        {
+            if ((now - lastChatAt).TotalMilliseconds < 700) return Fail("发得太快了，稍等一下。");
+            lastChatAt = now;
+            var line = new ChatLine(++chatSeq, name, text, now);
+            chat.Add(line);
+            if (chat.Count > 400) chat.RemoveRange(0, chat.Count - 400);
+            try
+            {
+                Directory.CreateDirectory(dataDir);
+                File.AppendAllText(ChatPath, JsonSerializer.Serialize(line) + Environment.NewLine);
+            }
+            catch (IOException ex) { return Fail("消息没能写进磁盘：" + ex.Message); }
+        }
+        return JsonSerializer.Serialize(new { ok = true, seq = chatSeq });
     }
 
     /// <summary>Called from the terminal's log pump; must stay cheap and thread-safe.</summary>
