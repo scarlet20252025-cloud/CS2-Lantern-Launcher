@@ -191,9 +191,27 @@ public sealed class GameConsole : IDisposable
         Disconnected?.Invoke(reason);
     }
 
+    /// <summary>
+    /// Waits for the one-at-a-time console slot. Bounded, because the room
+    /// monitor polls every few seconds and a map switch polls in a loop: an
+    /// unbounded wait here turns one slow reply into a permanent stall.
+    /// </summary>
+    async Task EnterQueries(CancellationToken token)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+        timeout.CancelAfter(QueueTimeout);
+        try { await queries.WaitAsync(timeout.Token); }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested)
+        {
+            throw new TimeoutException($"控制台 {QueueTimeout.TotalSeconds:F0} 秒内没有空闲下来，可能正在加载地图。");
+        }
+    }
+
+    static readonly TimeSpan QueueTimeout = TimeSpan.FromSeconds(12);
+
     public async Task<RoomStatus> ReadStatus()
     {
-        await queries.WaitAsync(lifetime.Token);
+        await EnterQueries(lifetime.Token);
         var done = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var buffer = new StringBuilder(); bool collecting = false;
         var marker = "LANTERN_STATUS_" + Guid.NewGuid().ToString("N");
@@ -244,7 +262,7 @@ public sealed class GameConsole : IDisposable
     // Executes a mutation once, then waits for its echo boundary; never retries a mutation.
     public async Task<string> ExecuteCaptured(string command)
     {
-        await queries.WaitAsync(lifetime.Token);
+        await EnterQueries(lifetime.Token);
         var done = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var buffer = new StringBuilder();
         var marker = "LANTERN_PLAYERS_" + Guid.NewGuid().ToString("N");

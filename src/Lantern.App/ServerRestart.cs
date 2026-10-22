@@ -167,7 +167,7 @@ public partial class MainWindow
             Hosting.WriteConfigs(root, plan); // Validate destination before stopping anything.
             launching = true; IsEnabled = false;
             var endpoint = await Task.Run(() => GameProcesses.Find(root, true));
-            roomGeneration++; transitionUnverified = true; observedRoom = null; roomNotice = null;
+            roomGeneration++; transitionUnverified = true; transitionDeadline = DateTime.UtcNow.AddSeconds(150); observedRoom = null; roomNotice = null;
             InvalidateRoom("服务器正在重启，旧加入信息已失效…");
             if (endpoint != null)
             {

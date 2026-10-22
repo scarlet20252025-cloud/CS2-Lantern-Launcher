@@ -147,20 +147,36 @@ public sealed class ConsolePipe : IDisposable
         return rest.StartsWith("Long frame (", StringComparison.Ordinal);
     }
 
-    /// <summary>Sends one command line. Queued by the engine; returns on write.</summary>
+    /// <summary>
+    /// Sends one command line. Queued by the engine; returns on write.
+    /// Bounded: while the engine is changing level it can stop draining this
+    /// pipe, and an unbounded WriteAsync then blocks the caller forever - which
+    /// is how a map switch used to hang with no error at all.
+    /// </summary>
     public async Task Send(string text, CancellationToken token)
     {
         var payload = ConsoleProtocol.Command(text);
         if (Volatile.Read(ref disposed) != 0) throw new ObjectDisposedException(nameof(ConsolePipe));
-        await writer.WaitAsync(token);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+        timeout.CancelAfter(SendTimeout);
         try
         {
-            if (!command.IsConnected) throw new IOException("游戏控制台管道尚未连接，无法下发命令。");
-            await command.WriteAsync(payload, token);
-            await command.FlushAsync(token);
+            await writer.WaitAsync(timeout.Token);
+            try
+            {
+                if (!command.IsConnected) throw new IOException("游戏控制台管道尚未连接，无法下发命令。");
+                await command.WriteAsync(payload, timeout.Token);
+                await command.FlushAsync(timeout.Token);
+            }
+            finally { writer.Release(); }
         }
-        finally { writer.Release(); }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested)
+        {
+            throw new TimeoutException($"游戏 {SendTimeout.TotalSeconds:F0} 秒内没有接收命令，可能正在加载地图。命令未确认送达。");
+        }
     }
+
+    static readonly TimeSpan SendTimeout = TimeSpan.FromSeconds(5);
 
     public void Dispose()
     {

@@ -44,10 +44,24 @@ public partial class MainWindow
             "\n好友网络连通情况仍需实际验证。";
     }
 
+    // Set when a switch starts, cleared when it is verified. It must never be a
+    // permanent latch: a switch that times out or throws used to leave it set,
+    // and then the room monitor stopped updating and every copy/join refused,
+    // which looked exactly like a hang. After the deadline the monitor resumes
+    // and reports whatever the server says, because the server is the authority.
+    DateTime transitionDeadline;
+
+    bool TransitionPending => transitionUnverified && DateTime.UtcNow < transitionDeadline;
+
     async Task MonitorRoom()
     {
         UpdateCapacityState();
-        if (launching || readingRoom || transitionUnverified || terminal == null) return;
+        if (transitionUnverified && !TransitionPending)
+        {
+            transitionUnverified = false;
+            Status("上次换图没能核实完成，已恢复房间监视；下面显示的是服务器当前实际状态。");
+        }
+        if (launching || readingRoom || TransitionPending || terminal == null) return;
         if (!terminal.IsConnected)
         {
             if (HostBox.SelectedIndex != 0)
@@ -71,7 +85,7 @@ public partial class MainWindow
     async Task<(RoomStatus Room, string Address)> VerifiedTarget(bool allowLoopback = false)
     {
         if (launching) throw new InvalidOperationException("正在换图，请等待地图与房间核验完成后再复制。");
-        if (transitionUnverified) throw new InvalidOperationException("上次换图尚未核实。请先点击“读取当前房间与加入地址”，确认实际地图后再分享。");
+        if (TransitionPending) throw new InvalidOperationException("上次换图还在核实中。请先点击“读取当前房间与加入地址”，确认实际地图后再分享。");
         int generation = roomGeneration;
         var room = await Terminal().GetRoomStatus();
         if (generation != roomGeneration || launching) throw new InvalidOperationException("房间正在变化，请稍后重试。");
@@ -117,7 +131,7 @@ public partial class MainWindow
         try
         {
             if (HostBox.SelectedIndex == 0) throw new InvalidOperationException("此按钮用于独立服务器；本机边玩边开模式已经在房间内。");
-            if (launching || transitionUnverified) throw new InvalidOperationException("请先等待地图核验完成，或读取当前房间确认状态。");
+            if (launching || TransitionPending) throw new InvalidOperationException("请先等待地图核验完成，或读取当前房间确认状态。");
             int generation = roomGeneration;
             var room = await Terminal().GetRoomStatus();
             var selected = Selected();
@@ -192,7 +206,7 @@ public partial class MainWindow
         var plan = before == null ? Hosting.Build(expected, settings, session)
             : RoomTransitions.ForExistingRoom(expected, settings, session);
         var exec = Hosting.WriteConfigs(root, plan); lastRules = RoomTransitions.ConsoleCommands(plan.Rules);
-        roomGeneration++; transitionUnverified = true;
+        roomGeneration++; transitionUnverified = true; transitionDeadline = DateTime.UtcNow.AddSeconds(150);
         InvalidateRoom("正在切换地图，旧加入信息暂停使用…");
         RunText.Text = before == null ? "正在建立房间…" : "正在保留房间切换地图，等待核验…";
         var activation = target.MapActivation;
@@ -200,9 +214,18 @@ public partial class MainWindow
         // Workshop cfg execution rejects changelevel. Send validated commands directly through NetCon.
         await target.SendCommand(RoomTransitions.ConsoleCommands(plan.Boot)); // Never replay a mutation.
         var deadline = DateTime.UtcNow.AddSeconds(120);
+        var started = DateTime.UtcNow;
         string lastError = "等待所选地图加载";
+        var attempts = 0;
         while (DateTime.UtcNow < deadline && !lifetime.IsCancellationRequested)
         {
+            // Say how long this has been going. A switch that silently sits for
+            // two minutes is indistinguishable from a hang, and that is exactly
+            // what it looked like when the pipe write blocked forever.
+            var elapsed = (int)(DateTime.UtcNow - started).TotalSeconds;
+            RunText.Text = $"正在切换地图，已等待 {elapsed} 秒…" +
+                (lastError.Length > 0 ? "\n" + lastError : "");
+            attempts++;
             // Activation output wakes this immediately; the short fallback poll
             // also handles reconnects where an activation line was missed.
             await target.WaitForMapActivity(200, lifetime.Token);
@@ -235,7 +258,9 @@ public partial class MainWindow
             }
             catch (Exception ex) { lastError = ex.Message; }
         }
-        throw new InvalidOperationException("换图尚未确认：" + lastError + "。未自动断开房间或重复换图；请查看终端，或读取当前房间核实。");
+        throw new InvalidOperationException(
+            $"换图尚未确认（{attempts} 次核验，最后一次：{lastError}）。未自动断开房间或重复换图；" +
+            "请查看游戏终端输出，或点“读取当前房间”核实。若服务器仍在加载这张图，等它加载完再重试即可。");
     }
 
     async Task TestRoomTransitions()
