@@ -24,9 +24,6 @@ public sealed class Preferences
     public int WebPort { get; set; } = 8787;
     public string SelectedIdentity { get; set; } = "";
     public string Root { get; set; } = "";
-    // The address friends use, kept here so the page does not go blank whenever
-    // the launcher restarts and the 好友联机 box has not been filled yet.
-    public string JoinAddress { get; set; } = "";
     public string Extra { get; set; } = "";
     public List<MapEntry> Imported { get; set; } = new();
     public Dictionary<string, WorkshopItem> Metadata { get; set; } = new();
@@ -85,9 +82,6 @@ public partial class MainWindow : Window
             RootBox.Text = install.Root; ExtraBox.Text = prefs.Extra;
             ModeBox.ItemsSource = GameMode.All; ModeBox.SelectedIndex = Math.Clamp(prefs.Settings.ModeIndex, 0, GameMode.All.Length - 1);
             LoadSettings(prefs.Settings); TrayCheck.IsChecked = prefs.CloseToTray; ready = true; HostChanged(null, null!);
-            // Must happen before any Save(): Save() writes this box back to prefs,
-            // and Scan() below saves, so an empty box here would erase the address.
-            LoadJoinAddress();
             SetView(prefs.GridView);
             // Restore a deliberate official-map selection (including crash recovery).
             // New users still default to local workshop maps.

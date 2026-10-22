@@ -109,34 +109,6 @@ public partial class MainWindow
             .Distinct()
             .ToList();
 
-    // Deliberately its own file: preferences.json is rewritten by scans and other
-    // unrelated actions, and every one of those rewrites came from an object that
-    // had never held this value, which silently erased it. A one-line file cannot
-    // be clobbered by code that does not know about it.
-    string JoinAddressPath => Path.Combine(dataDir, "join-address.txt");
-    string joinAddress = "";
-    void LoadJoinAddress()
-    {
-        try
-        {
-            joinAddress = File.Exists(JoinAddressPath)
-                ? File.ReadAllText(JoinAddressPath).Trim()
-                : (prefs.JoinAddress ?? "").Trim();
-            if (joinAddress.Length > 0 && !File.Exists(JoinAddressPath))
-                File.WriteAllText(JoinAddressPath, joinAddress);
-        }
-        catch (IOException) { joinAddress = (prefs.JoinAddress ?? "").Trim(); }
-        if (JoinAddressBox != null) JoinAddressBox.Text = joinAddress;
-    }
-    void JoinAddressChanged(object sender, RoutedEventArgs e)
-    {
-        var typed = JoinAddressBox.Text.Trim();
-        if (typed == joinAddress) return;
-        joinAddress = typed;
-        try { File.WriteAllText(JoinAddressPath, typed); }
-        catch (IOException ex) { Status("加入地址没写进磁盘：" + ex.Message); return; }
-        Status("加入地址已保存：" + (typed.Length > 0 ? typed : "未填（网页改用局域网地址）"));
-    }
 
     void UpdateWebAddresses()
     {
@@ -368,55 +340,30 @@ public partial class MainWindow
         return JsonSerializer.Serialize(payload);
     }
 
-    // The one command a friend runs: Win+R, paste, Enter. Prefer the address the
-    // host configured, because that is the one they actually forwarded; never
-    // invent a public address, and say which source it came from.
+    // One address, compiled in. The page is for friends; they get the address
+    // that is actually forwarded, with nothing to configure or mis-copy. Parsed
+    // once, so a typo fails immediately instead of when someone tries to join.
+    const string JoinAddress = "39.108.93.52:10003";
+    static readonly (string Host, int Port) JoinTarget = ParseJoinAddress(JoinAddress);
+
+    static (string Host, int Port) ParseJoinAddress(string value)
+    {
+        var colon = value.LastIndexOf(':');
+        if (colon <= 0 || !int.TryParse(value[(colon + 1)..], out var port) || port is < 1 or > 65535)
+            throw new InvalidOperationException("加入地址必须是 主机:端口，当前：" + value);
+        return (value[..colon], port);
+    }
+
     object JoinPayload(RoomStatus? room)
     {
-        // Even with nothing running the configured address is known, so the page
-        // never has to guess from location.hostname (which produced the wrong
-        // 26.x address: that is the web host, not the game port).
-        if (room == null)
-        {
-            var only = joinAddress.Trim();
-            if (only.Length == 0) return new { link = "", command = "", source = "", error = "" };
-            var split = only.LastIndexOf(':');
-            if (split <= 0 || !int.TryParse(only[(split + 1)..], out var explicitOnly))
-                return new { link = "", command = "", source = "", error = "加入地址缺少端口，填写 host:port 才能在网页上直接加入。" };
-            try
-            {
-                var url = Hosting.SteamConnectUrl(only[..split], explicitOnly);
-                return new { link = url, command = url, source = "启动器里固定的加入地址", error = "", configured = joinAddress };
-            }
-            catch (ArgumentException ex) { return new { link = "", command = "", source = "", error = ex.Message }; }
-        }
-        // The saved share address wins: it is the one the host actually forwarded,
-        // and it may carry its own port (frp maps UDP 10003 -> 27016). Falling
-        // back to the game port silently produced a command nobody could use.
-        var saved = joinAddress.Trim();
-        var configured = saved.Length > 0 ? saved : AddressBox.Text.Trim();
-        if (configured.Length == 0)
-            return new { link = "", command = "", source = "", error = "" };
-        var host = configured;
-        int? explicitPort = null;
-        var colon = configured.LastIndexOf(':');
-        if (colon > 0 && int.TryParse(configured[(colon + 1)..], out var parsed) && parsed is >= 1 and <= 65535)
-        { host = configured[..colon]; explicitPort = parsed; }
         try
         {
-            var url = Hosting.SteamConnectUrl(host, explicitPort ?? room.Port);
-            return new
-            {
-                link = url,
-                command = url,
-                source = saved.Length > 0 ? "启动器里固定的加入地址" : "「好友联机」页填写的地址",
-                error = "",
-                configured = joinAddress,
-            };
+            var url = Hosting.SteamConnectUrl(JoinTarget.Host, JoinTarget.Port);
+            return new { link = url, command = url, source = "固定加入地址", error = "", configured = JoinAddress };
         }
         catch (ArgumentException ex)
         {
-            return new { link = "", command = "", source = "", error = ex.Message };
+            return new { link = "", command = "", source = "", error = ex.Message, configured = JoinAddress };
         }
     }
 
