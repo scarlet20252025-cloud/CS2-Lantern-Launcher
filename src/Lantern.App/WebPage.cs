@@ -61,19 +61,32 @@ static class WebPage
   .tag.human{color:#0F1A0F;background:var(--green);border-color:var(--green);font-weight:600}
   .tag.ok{color:var(--green);border-color:#33523d}
   .tag.wait{color:var(--amber);border-color:#5a4527}
-  /* Chat */
+  /* Chat: a message list, not a stack of cards. Each message is a row with the
+     speaker on top and the text under it, which is how every messenger looks and
+     which stops six short lines from becoming six boxes. */
   .chat{display:flex;flex-direction:column;gap:7px}
-  .chat .lines{display:flex;flex-direction:column;gap:8px;max-height:min(58vh,520px);overflow-y:auto;
+  .chat .lines{display:flex;flex-direction:column;max-height:min(58vh,520px);overflow-y:auto;
                padding:2px 4px 2px 0}
-  .chat .m{background:var(--card2);border-radius:8px;padding:7px 9px;position:relative}
-  .chat .m .who{font-size:11.5px;color:var(--accent);font-weight:600;
-                display:flex;align-items:baseline;gap:6px;margin-bottom:2px}
-  /* The stamp is deliberately tiny and tucked into the corner: it is there when
-     you look for it, invisible when you are reading. */
-  .chat .m .at{margin-left:auto;font-size:9.5px;color:#5F7288;font-variant-numeric:tabular-nums;
-               font-family:Consolas,ui-monospace,monospace;letter-spacing:.02em}
-  .chat .m .txt{font-size:12.5px;line-height:1.45;word-break:break-word;white-space:pre-wrap}
-  .chat .m.mine{border-left:2px solid var(--amber)}
+  .chat .m{display:flex;gap:8px;padding:5px 2px;border-radius:7px}
+  .chat .m:hover{background:#1B2A3D66}
+  .chat .m .av{flex:0 0 auto;width:24px;height:24px;border-radius:50%;margin-top:1px;
+               display:flex;align-items:center;justify-content:center;
+               font-size:11px;font-weight:600;color:#101A28;background:#6E819B;
+               text-transform:uppercase;user-select:none}
+  .chat .m.mine .av{background:var(--amber)}
+  .chat .m .body{flex:1;min-width:0}
+  .chat .m .who{display:flex;align-items:baseline;gap:7px;line-height:1.25}
+  .chat .m .who .nm{font-size:11.5px;color:var(--muted);font-weight:600;
+                    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .chat .m.mine .who .nm{color:var(--amber)}
+  /* Deliberately tiny: present when you look for it, invisible while reading. */
+  .chat .m .at{font-size:9px;color:#55677D;font-variant-numeric:tabular-nums;
+               font-family:Consolas,ui-monospace,monospace;flex:0 0 auto}
+  .chat .m .txt{font-size:12.5px;line-height:1.45;word-break:break-word;white-space:pre-wrap;
+                margin-top:1px;color:#DCE4EE}
+  .chat .more{width:100%;margin:2px 0 4px;padding:5px 8px;font-size:11.5px;
+              background:transparent;border:1px dashed var(--line);color:var(--muted)}
+  .chat .more:hover:not(:disabled){border-color:var(--amber);background:#1B2A3D}
   .chat .compose{display:flex;gap:6px;align-items:flex-end;margin-top:2px}
   .chat .compose input{flex:1;min-width:0}
   .chat .name{display:flex;gap:6px;align-items:center;margin-bottom:7px}
@@ -697,7 +710,9 @@ static class WebPage
   (function(){
     var nameBox = $("chatName"), textBox = $("chatText"), send = $("chatSend");
     var lines = $("chatLines"), empty = $("chatEmpty"), state = $("chatState");
-    var since = 0, busy = false;
+    var since = 0, busy = false, all = [], expanded = false;
+
+    var FOLD_AT = 50;   // older messages collapse behind one button
 
     var saved = "";
     try { saved = localStorage.getItem("lantern.name") || ""; } catch (e) {}
@@ -712,42 +727,82 @@ static class WebPage
       return n;
     }
 
-    function add(m){
+    function initials(name){
+      var t = (name || "?").trim();
+      return t ? t[0] : "?";
+    }
+
+    function row(m){
+      var mine = m.name && m.name === myName();
       var box = document.createElement("div");
-      box.className = "m" + (m.name === myName() && m.name ? " mine" : "");
+      box.className = "m" + (mine ? " mine" : "");
+
+      var av = document.createElement("div");
+      av.className = "av";
+      av.textContent = initials(m.name);
+
+      var body = document.createElement("div");
+      body.className = "body";
+
       var who = document.createElement("div");
       who.className = "who";
-      var n = document.createElement("span");
-      n.textContent = m.name || "匿名";
+      var nm = document.createElement("span");
+      nm.className = "nm";
+      nm.textContent = m.name || "匿名";
       var at = document.createElement("span");
       at.className = "at";
       at.textContent = m.at || "";
       at.title = m.full || m.at || "";
-      who.appendChild(n); who.appendChild(at);
+      who.appendChild(nm); who.appendChild(at);
+
       var txt = document.createElement("div");
       txt.className = "txt";
       txt.textContent = m.text || "";
-      box.appendChild(who); box.appendChild(txt);
-      lines.appendChild(box);
+
+      body.appendChild(who); body.appendChild(txt);
+      box.appendChild(av); box.appendChild(body);
+      return box;
     }
 
-    function scrollDown(){
-      var near = lines.scrollTop + lines.clientHeight >= lines.scrollHeight - 60;
-      if (near) lines.scrollTop = lines.scrollHeight;
+    function render(){
+      // Rebuilding the whole list is fine at this size and keeps the fold
+      // boundary honest; a partial append would have to reason about it.
+      var atBottom = lines.scrollTop + lines.clientHeight >= lines.scrollHeight - 60;
+      lines.textContent = "";
+
+      var hidden = (!expanded && all.length > FOLD_AT) ? all.length - FOLD_AT : 0;
+      if (hidden > 0){
+        var more = document.createElement("button");
+        more.className = "more";
+        more.textContent = "展开更早的 " + hidden + " 条消息";
+        more.onclick = function(){ expanded = true; render(); };
+        lines.appendChild(more);
+      } else if (expanded && all.length > FOLD_AT){
+        var less = document.createElement("button");
+        less.className = "more";
+        less.textContent = "收起更早的消息";
+        less.onclick = function(){ expanded = false; render(); };
+        lines.appendChild(less);
+      }
+
+      for (var i = hidden; i < all.length; i++) lines.appendChild(row(all[i]));
+
+      empty.hidden = all.length > 0;
+      state.textContent = all.length ? (all.length + " 条") : "";
+      if (atBottom) lines.scrollTop = lines.scrollHeight;
     }
 
     function load(){
       api("/api/chat?since=" + since).then(function(r){
         if (!r.ok) return;
-        var added = 0;
-        (r.messages || []).forEach(function(m){
-          if (m.seq <= since) return;
-          add(m); since = m.seq; added++;
-        });
-        if (added) { scrollDown(); empty.hidden = true; }
-        if (since === 0) { empty.hidden = false; }
-        if (r.seq) since = Math.max(since, r.seq);
-        state.textContent = since ? "" : "还没有消息";
+        var fresh = (r.messages || []).filter(function(m){ return m.seq > since; });
+        if (fresh.length){
+          fresh.forEach(function(m){ all.push(m); since = m.seq; });
+          render();
+        } else if (!all.length){
+          empty.hidden = false;
+          state.textContent = "";
+        }
       }).catch(function(){ state.textContent = "聊天暂不可用"; });
     }
 
